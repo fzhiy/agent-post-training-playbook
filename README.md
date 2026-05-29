@@ -5,13 +5,17 @@
 >
 > Agent post-training playbook: AI-assisted bilingual (中/EN) study & interview-prep notes and drills on RL, continual learning, and self-improvement for LLM agents. A sibling to **post-training-playbook**.
 
-🔗 **在线阅读 / Read online:** (待发布 / coming soon) · MIT · AI-assisted · WIP
+🔗 **在线阅读 / Read online:** <https://ac.fzhiy.net/agent-post-training-playbook/> · MIT · AI-assisted · WIP
 
 ## ⚠️ 诚信声明 / Honesty disclaimer
 
 这是 **学习笔记**,**不是作者的研究成果**。本手册整理的是 agent 后训练前沿——其中**只有「持续 / 终身学习」**与作者已发表工作(**联邦持续微调** Fed-TaLoRA)真正相关;**agentic RL、self-evolving 等是作者正在学习 / 跟踪的前沿,并非已发表研究**。作者的一作论文见[学术主页](https://ac.fzhiy.net/)。
 
 > These are **study notes, not the author's research**. Of the topics here, only *continual / lifelong learning* overlaps the author's published work (federated continual fine-tuning); *agentic RL* and *self-evolving agents* are frontiers being studied, not claimed research.
+
+## 🚀 快速开始 / Quick start
+
+打开 **<https://ac.fzhiy.net/agent-post-training-playbook/>**(可搜索、响应式、手机可读),先看 **[Roadmap](https://ac.fzhiy.net/agent-post-training-playbook/cheatsheet-00-roadmap.html)** 按序刷。
 
 ## 📂 内容 / Contents (MVP)
 
@@ -21,7 +25,7 @@
 2. **continual & lifelong learning** — 灾难性遗忘、replay / EWC / 参数隔离、稳定-可塑、保持率、continual alignment。
 3. **self-improving LLMs** — STaR / ReST / RFT、self-rewarding、self-play、reflection / 自我纠正;何时会崩(reward hacking / model collapse)。
 
-- **`cheatsheets/`** — 上述三主题(公式 + from-scratch + L1/L2/L3 题)。
+- **`cheatsheets/`** — 上述三主题(公式 + from-scratch + L1/L2/L3 题 + 折叠简答 + 「深挖 / Deep-dive」高阶答疑)。
 - **`drills/`** — 可运行 from-scratch + 测试:多轮信用分配 · replay/EWC toy · Reflexion 循环。
 - **`docs/`** — 构建产物静态站点(marked + KaTeX + highlight.js **构建时**渲染,**零运行时 CDN**,国内直连 / 可离线)。
 
