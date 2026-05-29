@@ -9,19 +9,16 @@
 - 后训练主线(见姊妹仓库):PPO / GRPO / RLVR、reward modeling、PEFT。
 
 ## 1 · Agentic & Long-horizon RL
-- 多轮 / 工具使用 RL、长程信用分配(turn-level vs trajectory-level advantage)、稀疏 / 延迟奖励、RLVR→agentic、环境与奖励设计。
-- 手撕(规划):多轮信用分配 / trajectory advantage。
-- *(WIP)*
+- [agentic-and-long-horizon-rl](cheatsheet-agentic-and-long-horizon-rl.html) — 多轮 / 工具使用 RL、长程信用分配(turn vs trajectory)、RLVR→agentic、PRM/ORM、观测 token 掩码。
+- 手撕:[turn-credit-assignment](drill-turn-credit-assignment.html) — 组相对优势 + 掩码 PG。
 
 ## 2 · Continual & Lifelong Learning
-- 灾难性遗忘、replay / 正则(EWC)/ 参数隔离、稳定-可塑权衡、保持率 / 遗忘度量、continual alignment / alignment tax。
-- 手撕(规划):replay-buffer / EWC penalty toy。
-- *(WIP)*
+- [continual-and-lifelong-learning](cheatsheet-continual-and-lifelong-learning.html) — 灾难性遗忘、正则(EWC/SI/MAS)/ replay(GEM/A-GEM/DER)/ 参数隔离、AA/BWT/FWT、continual alignment / alignment tax。
+- 手撕:[ewc-replay](drill-ewc-replay.html) — Fisher + EWC 惩罚 + replay,验证抗遗忘。
 
 ## 3 · Self-improving LLMs
-- STaR / ReST / RFT(拒绝采样微调)、self-rewarding、self-play、reflection / 自我纠正;自造数据训练闭环;何时会崩(reward hacking / model collapse)。
-- 手撕(规划):Reflexion / self-refine 循环。
-- *(WIP)*
+- [self-improving-llms](cheatsheet-self-improving-llms.html) — STaR / ReST / RFT、self-rewarding、self-play(SPIN)、RLAIF、反思(Reflexion/Self-Refine);自改进闭环与崩溃模式。
+- 手撕:[self-refine-loop](drill-self-refine-loop.html) — 生成→批评→修订迭代,验证分数单调。
 
 ---
 
