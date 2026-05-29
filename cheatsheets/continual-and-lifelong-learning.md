@@ -251,26 +251,86 @@ class EWCTrainer:
 ## 分层面试题 / Stratified follow-ups
 
 ### L1 基础
-1. 什么是 catastrophic forgetting?为什么神经网络特别容易出现?
-2. stability-plasticity dilemma 是什么?给出一个直觉类比。
-3. EWC 的核心思想是什么?Fisher 信息矩阵在里面扮演什么角色?
-4. LwF 和 EWC 都不存旧数据,它们防遗忘的机制有何不同?
+
+<details class="qa"><summary>1. 什么是 catastrophic forgetting?为什么神经网络特别容易出现?</summary>
+
+答:神经网络的参数是所有任务的**共享存储**,在新任务 $\mathcal{T}_2$ 上 SGD 时梯度不知道哪些权重对旧任务 $\mathcal{T}_1$ 重要,直接覆盖它们,导致旧任务性能骤降——这就是 catastrophic forgetting。关键原因是参数共享加上独立优化目标:新任务梯度对旧任务损失来说是"噪声"。
+
+</details>
+
+<details class="qa"><summary>2. stability-plasticity dilemma 是什么?给出一个直觉类比。</summary>
+
+答:网络需要同时具备 **plasticity(可塑性)**——接受新任务梯度更新,和 **stability(稳定性)**——保住旧任务表征;两者天然冲突。直觉类比:学一门新语言时大脑既要记住母语(stability)又要塑造新语言回路(plasticity),死记硬背新语言可能挤压母语的神经路径。
+
+</details>
+
+<details class="qa"><summary>3. EWC 的核心思想是什么?Fisher 信息矩阵在里面扮演什么角色?</summary>
+
+答:EWC(Elastic Weight Consolidation)在新任务损失上加一个二次惩罚项 $\frac{\lambda}{2}\sum_i F_i(\theta_i - \theta_i^*)^2$,让"对旧任务重要的权重"尽量不变。Fisher 信息矩阵对角线 $F_i = \mathbb{E}[(\partial \log p_\theta / \partial \theta_i)^2]$ 衡量参数 $i$ 对旧任务的**重要性**——$F_i$ 越大则惩罚越强,该参数被"弹性"保护。
+
+</details>
+
+<details class="qa"><summary>4. LwF 和 EWC 都不存旧数据,它们防遗忘的机制有何不同?</summary>
+
+答:EWC 在**参数空间**施加约束——用 Fisher 惩罚让旧任务重要权重不偏离旧值;LwF(Learning without Forgetting)在**输出空间**施加约束——用旧模型在新任务数据上的 soft output 作蒸馏目标 $\mathcal{L}_{\text{KD}}$,让新模型保持旧模型的输出行为。LwF 无需重新计算重要性分数,但旧模型软目标质量随任务漂移而退化。
+
+</details>
 
 ### L2 进阶
-5. Replay 方法中 GEM 和 A-GEM 的核心区别是什么?A-GEM 为什么更高效?
-6. BWT 和 FWT 各衡量什么?一个模型 BWT 很负但 FWT 很正说明什么?
-7. Progressive Networks 为什么做到了"零遗忘"?代价是什么?
-8. LoRA-based CL 相比 EWC / replay 有什么优势?在 LLM post-training 链条里怎么用?
+
+<details class="qa"><summary>5. Replay 方法中 GEM 和 A-GEM 的核心区别是什么?A-GEM 为什么更高效?</summary>
+
+答:GEM 对每个旧任务 $k$ 单独施加梯度约束 $\langle g, g_k\rangle \geq 0$,需求解含 $(K-1)$ 个不等式的 QP,时间复杂度 $\mathcal{O}(K^3)$。A-GEM 将所有旧任务约束合并为单一均值约束 $\langle g, g_{\text{ref}}\rangle \geq 0$,投影有闭合解,每步计算量从 $\mathcal{O}(K \cdot d)$ 降为 $\mathcal{O}(d)$,与任务数无关。
+
+</details>
+
+<details class="qa"><summary>6. BWT 和 FWT 各衡量什么?一个模型 BWT 很负但 FWT 很正说明什么?</summary>
+
+答:BWT(Backward Transfer) $= \frac{1}{T-1}\sum_{j=1}^{T-1}(a_{T,j}-a_{j,j})$ 衡量遗忘程度,越负说明旧任务性能下降越严重。FWT(Forward Transfer) $= \frac{1}{T-1}\sum_{j=2}^{T}(a_{j-1,j}-b_j)$ 衡量旧任务对新任务的正向迁移,越正说明迁移越好。BWT 很负但 FWT 很正,说明该模型在新任务上利用了旧知识加速学习(迁移好),但同时严重覆盖了旧任务参数(遗忘严重)——典型的高可塑、低稳定模型。
+
+</details>
+
+<details class="qa"><summary>7. Progressive Networks 为什么做到了"零遗忘"?代价是什么?</summary>
+
+答:Progressive Neural Networks 每来一个新任务就新增一列独立网络,旧列参数完全冻结,新列通过 lateral connection 读取旧列激活 $h_k^{(\ell)} = f(W_k^{(\ell)} h_k^{(\ell-1)} + \sum_{j<k} U_{k,j}^{(\ell)} h_j^{(\ell-1)})$——旧列梯度路径被切断,遗忘在结构上不可能发生。代价是参数量随任务数线性增长。
+
+</details>
+
+<details class="qa"><summary>8. LoRA-based CL 相比 EWC / replay 有什么优势?在 LLM post-training 链条里怎么用?</summary>
+
+答:LoRA-based CL 为每个任务增量添加一套低秩 adapter,主干冻结——参数量可控且对旧任务零梯度干扰,无需存旧数据也无需计算 Fisher。在 LLM post-training 链条(SFT → DPO → RL)中,每阶段冻结主干只更新一套 LoRA,将 alignment tax 限制在 adapter 层内,主干通用知识不被覆盖;测试时按 task-ID 路由到对应 adapter。
+
+</details>
 
 ### L3 深挖
-9. LLM 的 continual pretraining 和经典 Task-IL 设定的主要差异在哪里?有哪些特有的挑战?
-10. 序列对齐链条(SFT → DPO → RL)中的 alignment tax 本质上是什么 CL 问题?有哪些方案缓解?
-11. EWC 用的是 empirical Fisher(用预测标签)而非 true Fisher(用真实标签)——这在什么情况下会出问题?
-12. Generative Replay 相比 experience replay 的优点和局限各是什么?在大模型时代是否更可行?
+
+<details class="qa"><summary>9. LLM 的 continual pretraining 和经典 Task-IL 设定的主要差异在哪里?有哪些特有的挑战?</summary>
+
+答:经典 Task-IL 有明确任务边界和任务 ID;LLM continual pretraining 无明确边界,领域语料持续流入,任务粒度模糊(通用能力与新领域大量重叠)。特有挑战包括:旧通用能力(数学推理、指令遵循)可能以难以检测的方式退化、新语料的分布偏移持续时间长、无法用标准 $a_{i,j}$ 矩阵量化遗忘,以及学习率 warm-up restart 和 replay 通用数据的比例难以调优。
+
+</details>
+
+<details class="qa"><summary>10. 序列对齐链条(SFT → DPO → RL)中的 alignment tax 本质上是什么 CL 问题?有哪些方案缓解?</summary>
+
+答:alignment tax 本质是序列 CL 中每一跳的遗忘税累积——每步对齐目标都是在前一步 checkpoint 上继续训练,新对齐目标的梯度覆盖前序已学行为。缓解方案：(1) **KL 约束**(PPO clip / DPO reference model)限制每步偏离幅度,其二阶展开等价于以 Fisher 为权重的 EWC；(2) **Replay 旧偏好数据**混入前序阶段样本；(3) **LoRA 每阶段独立 adapter** 将对齐行为局部化,主干不变。
+
+</details>
+
+<details class="qa"><summary>11. EWC 用的是 empirical Fisher(用真实标签)而非 true Fisher(用模型采样标签)——这在什么情况下会出问题?</summary>
+
+答:Empirical Fisher $F_i^{\text{emp}} = \mathbb{E}_{(x,y)\sim\mathcal{D}}[(\partial \log p_\theta(y|x)/\partial \theta_i)^2]$ 用数据集真实标签 $y$,只在模型完美拟合时与 true Fisher 等价。出问题的场景：模型对旧任务远未收敛时 $F^{\text{emp}}$ 估计噪声大、旧任务标签噪声高时方向被污染、多任务在线累积(online EWC)时早期误差持续传播、以及任务间分布差异极大时 diagonal 近似与 empirical 误差双重劣化——保护了错误方向。
+
+</details>
+
+<details class="qa"><summary>12. Generative Replay 相比 experience replay 的优点和局限各是什么?在大模型时代是否更可行?</summary>
+
+答:Generative Replay 用生成模型(VAE/GAN)合成"伪旧数据"注入训练，**优点**是无需存储任何真实旧样本，天然解决隐私和存储约束。**局限**是生成质量瓶颈会随任务序列积累误差——生成模型本身也面临遗忘，合成数据与真实分布的偏差在长任务链上叠加。在大模型时代，LLM 本身的生成能力极强，用 LLM 合成旧任务数据的质量远高于小型 GAN——可行性显著提升，但生成成本高且合成数据仍可能与原始分布有系统偏差。
+
+</details>
 
 ---
 
-## 深挖 / Deep-dive Q&A
+## 深挖 / Deep-dive
 
 > 以下为面试级进阶问答,涵盖上方笔记中最常被追问的 7 个难点。所有结论均来自所引论文,不含作者本人研究成果。
 

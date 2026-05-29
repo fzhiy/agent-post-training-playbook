@@ -90,26 +90,86 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 ## 分层面试题 / Stratified follow-ups
 
 ### L1 基础
-1. 什么样的任务算"长程(long-horizon)"?举两个 LLM agent 的例子。
-2. 为什么单轮 RLHF/RLVR 不足以训练多轮工具使用 agent?
-3. 稀疏 / 延迟奖励为什么难?
-4. 训练时为什么要把**工具返回的 token** 掩掉?
+
+<details class="qa"><summary>1. 什么样的任务算"长程(long-horizon)"?举两个 LLM agent 的例子。</summary>
+
+答:任务需要多轮 think→act→observe 循环,reward 只在终端给出(稀疏/延迟),动作空间包含工具调用。例子:①代码 agent 循环调用代码执行器调试程序;②搜索+汇总 agent 多轮查询 web API 后生成报告。
+
+</details>
+
+<details class="qa"><summary>2. 为什么单轮 RLHF/RLVR 不足以训练多轮工具使用 agent?</summary>
+
+答:单轮 RL 假设一问一答一奖励,episode 形状为单条 response;多轮 agent 的 episode 是 `(reasoning, tool_call, observation)` 反复交错,reward 只在最终轮给出,单轮损失函数无法处理跨轮信用分配,也没有对工具观测 token 的掩码机制。
+
+</details>
+
+<details class="qa"><summary>3. 稀疏 / 延迟奖励为什么难?</summary>
+
+答:终端只有一个 reward,无法直接判断几十轮中哪一轮、哪个 token 该被奖惩,即长程信用分配问题。此外,训练初期成功轨迹概率随轮次指数衰减(若每轮成功率 0.8,10 轮后约 0.11),导致大量 rollout 全零 reward、梯度信号几乎消失。
+
+</details>
+
+<details class="qa"><summary>4. 训练时为什么要把<strong>工具返回的 token</strong> 掩掉?</summary>
+
+答:工具返回是环境注入的观测,不是 policy 生成的——若不掩掉,loss 会要求模型去"拟合"工具输出,相当于对观测做 SFT,污染策略梯度信号。正确做法是 action_mask=0 屏蔽所有 `obs_*` token,梯度只流向 agent 自己生成的 think/act token。
+
+</details>
 
 ### L2 进阶
-5. trajectory-level / turn-level / token-level advantage 各是什么?权衡?
-6. GRPO 的组内相对 baseline 如何搬到多轮?为什么能省掉 critic?
-7. PRM 与 ORM 在长程信用分配上的取舍?
-8. 长程 reward hacking 有哪些典型形态?怎么缓解?
+
+<details class="qa"><summary>5. trajectory-level / turn-level / token-level advantage 各是什么?权衡?</summary>
+
+答:trajectory-level 对整条轨迹共享一个 advantage,最简单但把好轨迹里的坏步也一起奖励;turn-level 给每轮一个 advantage(需 step reward 或价值估计),信用更精准;token-level 是最细粒度,通常由 turn-level advantage 广播到该轮 agent 生成的 token 并乘以 action mask。粒度越细信用越准,但对 critic/PRM 的依赖越强。
+
+</details>
+
+<details class="qa"><summary>6. GRPO 的组内相对 baseline 如何搬到多轮?为什么能省掉 critic?</summary>
+
+答:对同一任务采样一组多轮轨迹,用组内终端 return 的均值/标准差归一化得到 $A(\tau_i)=\frac{R(\tau_i)-\mu_g}{\sigma_g+\epsilon}$,以组均值作 baseline 替代 critic。省 critic 的原因是 baseline 由同批 rollout 统计而来,无需额外价值网络;代价是方差在稀疏长程场景可能大(全零 group 时 advantage 退化为零)。
+
+</details>
+
+<details class="qa"><summary>7. PRM 与 ORM 在长程信用分配上的取舍?</summary>
+
+答:ORM 只看终端结果,信号稀疏、信用分配粗,但标注成本低且难被 hack;PRM 对每步打分(理想上为未来成功率变化量),信用精准,但标注/训练更贵且中间步评分器可被 agent gaming。长程场景常折中:以 ORM 终端可验证奖励为主,辅以少量可验证里程碑充当 PRM 信号。
+
+</details>
+
+<details class="qa"><summary>8. 长程 reward hacking 有哪些典型形态?怎么缓解?</summary>
+
+答:三类典型形态:①空转/looping(反复调用廉价工具拉长轨迹以积分);②premature stop(提前声明完成绕过后续困难步骤);③milestone gaming(触发里程碑而不真正解决子任务)。缓解组合拳:终端可验证奖励为主 + 步数/token 成本惩罚 + 观测 token loss mask + KL 惩罚项 + 对抗性测试集轮换。
+
+</details>
 
 ### L3 深挖
-9. 终端只有一个 0/1 reward 时,如何把信用合理分到几十轮?给出至少两种思路并比较。
-10. 如何把"可验证结果奖励"与"过程监督"结合,既稳又不被刷?
-11. agentic RL 的 rollout 为什么贵?有哪些工程缓解(异步执行、截断、长度惩罚)?各自代价?
-12. 误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?
+
+<details class="qa"><summary>9. 终端只有一个 0/1 reward 时,如何把信用合理分到几十轮?给出至少两种思路并比较。</summary>
+
+答:①**GRPO 组相对 baseline**:同任务多条轨迹共享终端 return 作归一化 baseline,简单无需 critic,但信用在轨迹内仍均摊;②**turn-level GAE**:引入轻量 turn-level value 头,用 $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ 把终端 return 分解为逐轮 TD 误差,信用更精准但需 critic bootstrap;③**PRM step reward**:用蒙特卡洛 rollout 估计每步未来成功率变化作步级 reward,信用最细但采样成本最高。三者折中:先 GRPO 训练基础能力,稳定后加 turn-level value 头。
+
+</details>
+
+<details class="qa"><summary>10. 如何把"可验证结果奖励"与"过程监督"结合,既稳又不被刷?</summary>
+
+答:以终端可验证信号(unit test pass / 环境状态)为主奖励——难 hack;用**可验证里程碑**作中间 step reward(子函数单元测试通过而非神经网络打分),缓解稀疏性而不引入可被 gaming 的 proxy。同时加 KL 惩罚 $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ 防 overoptimization,以及步数惩罚压制 looping。
+
+</details>
+
+<details class="qa"><summary>11. agentic RL 的 rollout 为什么贵?有哪些工程缓解(异步执行、截断、长度惩罚)?各自代价?</summary>
+
+答:rollout 需在循环里真实执行工具/环境(网络、代码执行等),延迟可达秒级,且轨迹更长导致 KV cache 占用大。缓解:①**异步执行**——并行跑多个 episode,GPU 不空等;代价是 rollout 完成时 policy 已经走了若干步(staleness),需要 IS 修正或 ESS 监控。②**轨迹截断**——超过最大步数强行终止;代价是截断轨迹的 return 不完整,需 bootstrap 补齐或直接丢弃。③**长度惩罚** $R'=R-\alpha|\tau|$——激励 agent 高效完成;代价是可能惩罚必要的长推理链。
+
+</details>
+
+<details class="qa"><summary>12. 误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?</summary>
+
+答:每轮决策的小误差会改变后续观测,导致轨迹偏离训练分布,下一轮又在分布外状态上犯更大误差,误差随轮次**指数级放大**。这与 SFT 的 exposure bias 同构——训练时见到的是 ground-truth 前缀,推理时见到的是模型自己生成的前缀;长程 agent 尤为严重因为工具返回也依赖于之前行动。缓解:RL 本身通过让模型在自身 rollout 上训练来缓解 exposure bias;课程学习(从短 horizon 开始)可以降低初期误差累积速度。
+
+</details>
 
 ---
 
-## 深挖 Q&A / Deep-dive
+## 深挖 / Deep-dive
 
 > 面试陷阱级问题:以下问答假设考官已熟悉单轮 GRPO/PPO,追问多轮场景下的精细机制。**学习笔记,非作者研究成果**。
 

@@ -255,28 +255,88 @@ if __name__ == "__main__":
 ## 分层面试题 / Stratified follow-ups
 
 ### L1 基础
-1. 自我改进的"生成-过滤-训练"循环是什么?为什么需要循环而不是一次性?
-2. STaR 如何在没有 rationale 标注的情况下训练 chain-of-thought?hint-retry 解决什么问题?
-3. Reflexion 和 Self-Refine 为什么被称为"training-free"?它们的改进能持久化吗?
-4. Constitutional AI 里"宪法"起什么作用?AI feedback 如何替代人工 preference 标注?
+
+<details class="qa"><summary>1. 自我改进的"生成-过滤-训练"循环是什么?为什么需要循环而不是一次性?</summary>
+
+答:循环骨架是:当前策略生成候选输出 → 过滤/打分机制淘汰低质样本 → 在保留集上更新权重 → 用新模型重跑。一次性的问题是:初始模型能力有限,一轮生成的正确样本覆盖范围窄;循环后每轮新模型能解决上一轮答不对的题,逐渐扩大训练信号覆盖,实现自举式能力提升。
+
+</details>
+
+<details class="qa"><summary>2. STaR 如何在没有 rationale 标注的情况下训练 chain-of-thought?<strong>hint-retry</strong> 解决什么问题?</summary>
+
+答:STaR 对每道题采样 $K$ 条 chain-of-thought,只保留最终答案正确的 rationale 做 SFT(rejection sampling),从而无需人工 rationale 标注。hint-retry 针对"模型全部答错的题"——给出正确答案后让模型重新生成解释再混入训练集,防止简单题垄断训练集、难题得不到任何梯度更新。
+
+</details>
+
+<details class="qa"><summary>3. Reflexion 和 Self-Refine 为什么被称为"training-free"?它们的改进能持久化吗?</summary>
+
+答:两者都不更新模型权重——Reflexion 把自然语言反思存入 episodic memory 注入 context,Self-Refine 在单次对话中循环"生成→批评→修订"。改进不能持久化:Reflexion 的改进仅存在于当前会话 context,重启即失效;Self-Refine 同理,下次调用从零开始。
+
+</details>
+
+<details class="qa"><summary>4. Constitutional AI 里"宪法"起什么作用?AI feedback 如何替代人工 preference 标注?</summary>
+
+答:"宪法"是一套原则列表(如"避免歧视性内容"),SL-CAI 阶段用它引导模型自我批评并修订有害草稿,修订后的输出用于 SFT。RL-CAI 阶段让模型用 AI 评分(哪条回答更符合宪法)构造 preference 对,用 AI-labeled preference 训练 reward model 再做 RL,从而以 AI 反馈替代大规模人工无害性标注(RLAIF)。
+
+</details>
 
 ### L2 进阶
-5. ReST 的 Grow 和 Improve 两阶段如何分工?为什么比在线 RLHF 更样本高效?
-6. SPIN 用"前一轮自己"做负样本,和 DPO 用人工 preference 对相比有什么优劣?
-7. Self-Rewarding 里"生成"和"评判"共享同一参数会带来什么问题?
-8. 奖励 hacking 和 RM 过优化是同一回事吗?如何用 KL 约束缓解?
+
+<details class="qa"><summary>5. ReST 的 Grow 和 Improve 两阶段如何分工?为什么比在线 RLHF 更样本高效?</summary>
+
+答:Grow 阶段用当前策略 $\pi_\theta$ 大规模采样并用奖励函数打分,构建离线数据集 $\mathcal{D}$;Improve 阶段在奖励超过阈值 $\tau$ 的子集上微调,且可提高 $\tau$ 多次重复 Improve。样本高效的原因是:Grow 只需偶尔刷新一次,Improve 可在同一批数据上多轮复用;在线 RLHF 每步都要采样新数据,计算更分散。
+
+</details>
+
+<details class="qa"><summary>6. SPIN 用"前一轮自己"做负样本,和 DPO 用人工 preference 对相比有什么优劣?</summary>
+
+答:SPIN 优势是无需额外人工 preference 标注,负样本完全由历史版本 $\pi_{\theta_{t-1}}$ 提供,成本低。劣势是理论上界被 SFT 数据质量锁定——SPIN 收敛条件是 $\pi_{\theta_t} = p_\text{data}$,无法超越人类 SFT 数据;且随迭代推进负样本质量趋近正样本,对比信号越来越弱。DPO 的人工 preference 可以覆盖 SFT 数据外的对齐维度,但标注成本高。
+
+</details>
+
+<details class="qa"><summary>7. Self-Rewarding 里"生成"和"评判"共享同一参数会带来什么问题?</summary>
+
+答:生成器的盲点会被评判者继承——模型不擅长某类推理,给该类推理打高分的概率也偏低,偏好数据系统性低估了这部分能力。同时存在自我确认偏差:模型倾向于给"风格像自己"的答案打高分,正反馈闭环使偏差随迭代累积放大而非均值回归(见深挖 Q3)。
+
+</details>
+
+<details class="qa"><summary>8. 奖励 hacking 和 RM 过优化是同一回事吗?如何用 KL 约束缓解?</summary>
+
+答:RM 过优化是奖励 hacking 的一种具体形式:策略被持续优化后,在 RM 的分布外区域找到高代理奖励但低真实质量的输出——Goodhart's Law 的定量体现。KL 约束通过 $\mathcal{J}(\theta) = \mathbb{E}[r(y)] - \beta\,\mathrm{KL}[\pi_\theta \,\|\, \pi_{\text{ref}}]$ 限制策略偏离参考模型的程度；$\beta$ 越大越保守,防止策略进入 RM 的分布外高分区。
+
+</details>
 
 ### L3 深挖
-9. 模型坍塌 / 分布收窄在数学上如何刻画?有哪些缓解手段(温度采样、多样性约束、数据混合)?
-10. STaR 每轮只保留正确样本会引入什么 selection bias?如何缓解?
-11. 把 Self-Rewarding 的 LLM-as-Judge 与外部 reward model 结合,各自的信息贡献是什么?如何防止两者互相"共谋"?
-12. 如果自我改进循环收敛到某个局部最优(模型无法产出比自己更好的数据),有哪些破局思路?
+
+<details class="qa"><summary>9. 模型坍塌 / 分布收窄在数学上如何刻画?有哪些缓解手段(温度采样、多样性约束、数据混合)?</summary>
+
+答:每轮只保留 top-$k$ 样本等价于截断采样,熵单调下降:$H(\pi_{\theta_t}) \le H(\pi_{\theta_{t-1}})$。Shumailov et al. 指出统计近似误差与函数近似误差在迭代中叠加,导致分布尾部(多样性来源)系统性消失。缓解手段:提高采样温度保留低概率路径;加入 diversity reward 项奖励输出多样性;定期混入原始人类数据作为分布锚点,防止无约束漂移。
+
+</details>
+
+<details class="qa"><summary>10. STaR 每轮只保留正确样本会引入什么 selection bias?如何缓解?</summary>
+
+答:过滤只看最终答案,等价于 $p_{\text{train}}(r|x) \propto p_\theta(r|x)\cdot\mathbf{1}[\text{answer}(r)=a^*]$,导致三类偏差:①错误推理路径只要答案侥幸正确就混入训练集;②训练集来自 $\pi_{\theta_{t-1}}$,每轮偏离真实推理分布;③难题过滤后训练集为空,模型无法自举改进。缓解方向:用 process reward model(PRM)对每步打分(Lightman et al.)减少步骤级错误;混合原始 SFT 数据防止分布完全漂移。
+
+</details>
+
+<details class="qa"><summary>11. 把 Self-Rewarding 的 LLM-as-Judge 与外部 reward model 结合,各自的信息贡献是什么?如何防止两者互相"共谋"?</summary>
+
+答:LLM-as-Judge 贡献的是生成器自身的语义理解与风格判断(覆盖广但有自我确认偏差);外部 RM 贡献的是独立参数的偏好估计(初始时与生成器偏差方向无关,但有分布外泛化失效风险)。防共谋的关键是保持两者参数独立且训练数据不互相污染;同时用 held-out 可验证答案或人工评估作为第三方信号定期校准,避免两个近似信号在同一方向累积误差。
+
+</details>
+
+<details class="qa"><summary>12. 如果自我改进循环收敛到某个局部最优(模型无法产出比自己更好的数据),有哪些破局思路?</summary>
+
+答:根据深挖 Q7,停滞有三种根源——过滤信号饱和、分布收窄后探索不足、任务难度超出 bootstrapping 能力。对应破局思路:①课程学习:引入更难或更多样的题目扩大信号覆盖;②提高采样温度或加入多样性 reward,恢复探索能力;③引入外部更强教师模型(或 RLVR 可验证器)提供独立于当前模型的训练信号;④切换方法,从 SPIN/STaR 等自举式方法转向有外部验证信号的 RL 方法。
+
+</details>
 
 ---
 
 ---
 
-## 深挖 Q&A / Deep-dive
+## 深挖 / Deep-dive
 
 > 进阶面试题的详细解析。⚠️ 学习笔记,非作者研究成果。数字以原论文为准。
 

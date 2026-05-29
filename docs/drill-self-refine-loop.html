@@ -50,6 +50,13 @@
   }
   @media (min-width:1180px) and (prefers-color-scheme:dark){
     .cite-note{color:#aaa}}
+  /* 折叠简答 (L1/L2/L3): 点问题展开简答, 原生 <details>, 零 JS。 */
+  details.qa{border:1px solid #8884;border-radius:6px;margin:.5em 0;padding:.2em .8em;background:#8881}
+  details.qa>summary{cursor:pointer;color:#0a7;font-weight:500;list-style:none;padding:.35em 0}
+  details.qa>summary::-webkit-details-marker{display:none}
+  details.qa>summary::before{content:"▸ ";color:#0a7;font-weight:700}
+  details.qa[open]>summary::before{content:"▾ "}
+  details.qa[open]{padding-bottom:.5em}
 </style>
 </head>
 <body>
