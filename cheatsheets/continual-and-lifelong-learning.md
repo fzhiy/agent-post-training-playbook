@@ -270,6 +270,248 @@ class EWCTrainer:
 
 ---
 
+## 深挖 / Deep-dive Q&A
+
+> 以下为面试级进阶问答,涵盖上方笔记中最常被追问的 7 个难点。所有结论均来自所引论文,不含作者本人研究成果。
+
+### D1. Empirical Fisher vs. True Fisher——EWC 用的是哪个,何时会崩?
+
+**True Fisher** 定义为对数似然梯度外积关于**模型预测分布** $p_\theta(y|x)$ 的期望:
+
+$$F_i^{\text{true}} = \mathbb{E}_{x \sim \mathcal{D},\; y \sim p_\theta(\cdot|x)}\!\left[\left(\frac{\partial \log p_\theta(y|x)}{\partial \theta_i}\right)^{\!2}\right]$$
+
+**Empirical Fisher** 用**数据集中的真实标签** $y$ 替代从模型分布采样的 $y$:
+
+$$F_i^{\text{emp}} = \mathbb{E}_{(x,y) \sim \mathcal{D}}\!\left[\left(\frac{\partial \log p_\theta(y|x)}{\partial \theta_i}\right)^{\!2}\right]$$
+
+两者只在模型完美拟合数据($p_\theta(y|x) \approx \delta_y$)时相等。已有研究指出,在优化过程中 empirical Fisher 不能一般性地捕获二阶信息,在实践中与真实 Hessian 的差异可能很大——即使在简单优化问题上也会出现病态。
+
+**EWC 用的是 empirical Fisher**:实现时对旧任务数据集 $\mathcal{D}_1$ 中的 $(x,y)$ 对求梯度平方期望。代码注释中也已注明"用真实标签 $y$ 估计 Fisher"。
+
+**何时近似会崩?**
+
+| 场景 | 风险 |
+|---|---|
+| 模型对旧任务远未收敛时就计算 $F$ | $F^{\text{emp}}$ 估计噪声大,保护错了方向 |
+| 旧任务标签噪声高 | $F^{\text{emp}}$ 方向被标签噪声污染 |
+| 多任务序列累积(online EWC) | 早期任务的 $F^{\text{emp}}$ 误差在滑动平均中持续传播 |
+| 任务间分布差异极大(如语言→视觉) | diagonal 近似本身已是强假设,加上 empirical 误差双重劣化 |
+
+直觉:EWC 的二次惩罚本质是对参数空间作局部二次近似——diagonal empirical Fisher 是这个近似中最粗糙的一层。在旧任务已良好收敛、标签干净、参数相关性弱的情形下近似尚可;否则"重要性分数"与真实 loss landscape 曲率脱钩,惩罚保护了错误的方向。
+
+---
+
+### D2. Online/Streaming EWC——如何跨任务累积 Fisher?
+
+标准 EWC 每遇到一个新旧任务对就存一组 $(F^{(k)}, \theta^{*(k)})$,内存随任务数 $K$ 线性增长。**Online EWC**(Progress & Compress,Schwarz et al. 2018)<span class="cite-wrap"><a class="cite" id="fnref-7" href="#ref-7">7</a><span class="cite-note">Progress & Compress 双网络框架:active column 学新任务,knowledge base 用 online EWC 压缩固化;Fisher 用指数移动平均跨任务累积。<a href="https://arxiv.org/abs/1805.06370">Schwarz 2018 ↗</a></span></span> 用**指数移动平均(EMA)**将所有历史任务的 Fisher 合并为单一 $\tilde{F}$:
+
+$$\tilde{F}^{(k)} = \gamma \cdot \tilde{F}^{(k-1)} + (1-\gamma) \cdot F^{(k)}$$
+
+总惩罚退化为单组惩罚:
+
+$$\mathcal{L}_{\text{online-EWC}} = \mathcal{L}_{\mathcal{T}_k}(\theta) + \frac{\lambda}{2}\sum_i \tilde{F}_i^{(k-1)}\bigl(\theta_i - \theta_i^{*(k-1)}\bigr)^2$$
+
+**优点**:内存恒定(只存一个 $\tilde{F}$ 和一个 $\theta^*$ 快照)。
+
+**代价与风险**:
+
+- EMA 对早期任务的 Fisher 权重呈指数衰减——任务越久远保护越弱,本质上倾向保护"最近"的任务。
+- $\gamma$ 是新超参:$\gamma \to 1$ 保留历史但遗忘率高;$\gamma \to 0$ 退化为只看上一任务。
+- 参考点 $\theta^*$ 每轮更新,每次压缩后新的 $\theta^*$ 并非所有历史任务的最优公共点——多任务积累下惩罚中心漂移。
+
+**SI(Synaptic Intelligence)** 则是另一种流式方案:在训练过程中**在线累积**每个参数对损失下降的贡献积分作为重要性:
+
+$$\Omega_i \propto \int_{\text{trajectory}} \frac{\partial \mathcal{L}}{\partial \theta_i} \cdot \dot\theta_i \, dt$$
+
+SI 无需任务结束后的额外后向传播,适合**无明确任务边界**的 streaming 场景,但重要性估计的信噪比比 EWC 更低。
+
+---
+
+### D3. Stability Gap——为什么遗忘先变严重再恢复?
+
+De Lange et al. (arXiv 2022, ICLR 2023)<span class="cite-wrap"><a class="cite" id="fnref-8" href="#ref-8">8</a><span class="cite-note">提出 per-iteration 连续评估框架,首次系统记录 stability gap:任务切换后性能骤降随后恢复,仅在任务末尾评估会错过这一现象。<a href="https://arxiv.org/abs/2205.13452">De Lange 2022 ↗</a></span></span> 通过 **per-iteration 连续评估**发现:几乎所有主流 CL 方法(包括 EWC、ER、A-GEM)在**切换到新任务的最初若干步**,旧任务性能会骤降——随后随训练进展逐渐恢复甚至超过切换前水平。这个"先跌后回"的现象被称为 **stability gap**。
+
+**机制直觉:**
+
+```
+任务 T1 训练完毕 → 切换 T2
+     ↓ 前几十步
+T2 的大梯度冲击共享特征层 → T1 表征暂时失效 → T1 性能骤降
+     ↓ 继续训练
+正则化 / replay 约束开始发挥作用 → T1 表征逐渐修复
+     ↓ T2 末尾
+T1 性能恢复(但可能低于 T1 训练结束时的峰值)
+```
+
+**为什么之前没被发现?**
+
+标准评估协议只在**每个任务学完后**测一次,正好跳过了骤降期——stability gap 在任务末尾的"快照"中几乎不可见。
+
+**面试要点:**
+
+- Stability gap 意味着 BWT 指标(任务末尾快照)**低估了真实的遗忘幅度**——在安全关键场景(部署中的 LLM 增量更新)中,训练过程的最差情况性能可能比 BWT 反映的严重得多。
+- 缓解方向:warm-up 过渡期内降低新任务学习率;先用小 batch 对新任务"探测"再开全速训练;replay 在切换初期加大旧任务比例。
+
+---
+
+### D4. Replay 样本选择策略与 Buffer 大小效应
+
+Buffer 大小 $M$ 是 replay 方法最关键的超参之一。三类主流选择策略:
+
+**① 随机水库采样(Reservoir Sampling)**
+
+对长度未知的数据流,维护大小为 $M$ 的 buffer,每个新样本 $x_t$ 以概率 $M/t$ 被纳入 buffer(随机替换一个旧样本)。保证 buffer 中每个样本是所有历史样本的均匀子集——无类别偏置,实现简单,是 ER / A-GEM 的默认策略。
+
+**② Herding(iCaRL)**
+
+iCaRL 的 herding 算法:贪心迭代选取样本,使 exemplar 集的特征均值最接近整个类的特征均值:
+
+$$p_t = \arg\min_{x \in \mathcal{D}_k} \left\| \mu_k - \frac{1}{t}\!\left(\phi(x) + \sum_{j=1}^{t-1}\phi(p_j)\right)\right\|$$
+
+Herding 在类别 exemplar 选择上优于随机采样,尤其在 $M$ 极小时(每类只存几个样本)能更好保留类内多样性。但 herding 需要已有所有类别数据、且依赖特征空间——特征漂移后旧类的 exemplar 可能不再代表其当前特征。
+
+**③ 梯度驱动选择(Gradient-Based)**
+
+选择对新任务梯度更新影响最大的旧样本——通常是那些与新任务梯度方向最"冲突"的样本。直觉是用最难约束的样本来约束梯度。计算开销高(需要额外反向传播估计每个候选样本的梯度影响),在大规模实验中少用。
+
+**Buffer 大小效应总结:**
+
+| Buffer 大小 $M$ | 随机/Reservoir | Herding | 梯度驱动 |
+|---|---|---|---|
+| 极小(每类 1-5 样本) | 覆盖差,遗忘严重 | 明显优于随机 | 效果好但代价极高 |
+| 中等(每类 20-50) | 接近 herding | 差距缩小 | 收益递减 |
+| 大(接近无限) | 三者趋同,接近 joint training | 同左 | 同左 |
+
+核心洞察:$M \to \infty$ 时所有 replay 方法退化为 joint training(上界);$M$ 小时 exemplar 的代表性比随机性更重要——herding 在此区间胜出。
+
+---
+
+### D5. GEM 的逐任务 QP 代价 vs. A-GEM 的单一均值约束
+
+**GEM 的 QP 问题:**
+
+新任务当前梯度为 $g$,对每个旧任务 $k$ 有约束 $\langle g, g_k \rangle \geq 0$。若约束被违反,需求解:
+
+$$\tilde{g} = \arg\min_v \|v - g\|^2 \quad \text{s.t.} \quad \langle v, g_k\rangle \geq 0,\; \forall k \in \{1,\ldots,K-1\}$$
+
+这是一个含 $(K-1)$ 个不等式约束的二次规划(QP)。标准 QP 求解器的时间复杂度为 $\mathcal{O}(K^3)$,空间复杂度为 $\mathcal{O}(K^2)$——任务数增大时迅速不可行。GEM 的实现用 Frank-Wolfe 等迭代方法近似求解,每步仍需 $K$ 次梯度内积计算,即 $\mathcal{O}(K \cdot d)$($d$ 为参数维度)。
+
+**A-GEM 的单一约束:**
+
+A-GEM 将所有旧任务约束合并为一个平均梯度:
+
+$$g_{\text{ref}} = \frac{1}{K-1}\sum_{k=1}^{K-1} g_k, \quad \text{约束:}\; \langle g, g_{\text{ref}} \rangle \geq 0$$
+
+若违反,投影公式有闭合解:
+
+$$\tilde{g} = g - \frac{\langle g, g_{\text{ref}} \rangle}{\|g_{\text{ref}}\|^2} g_{\text{ref}}$$
+
+**每步计算量从 $\mathcal{O}(K \cdot d)$ 降为 $\mathcal{O}(d)$**——与任务数无关(计算 $g_{\text{ref}}$ 可一次性完成并复用)。
+
+**代价:**
+
+A-GEM 满足的是平均方向约束,不保证对每个旧任务 $k$ 都有 $\langle \tilde{g}, g_k\rangle \geq 0$——某些单个旧任务的损失可能上升。实证上 A-GEM 的 AA 和 BWT 与 GEM 相当,但在任务间梯度高度异质时(某些任务方向与均值偏差大)偶尔会出现某个旧任务的遗忘比 GEM 更严重。
+
+**面试记忆点:**GEM = 逐任务约束 + 二次规划,$\mathcal{O}(K^3)$ QP;A-GEM = 单一均值约束 + 闭合解投影,$\mathcal{O}(d)$;牺牲的是per-task 约束保证,换来了线性时间复杂度。
+
+---
+
+### D6. 为什么 Class-IL 最难?Output Head 的角色
+
+van de Ven & Tolias 2019<span class="cite-wrap"><a class="cite" id="fnref-9" href="#ref-9">9</a><span class="cite-note">系统对比三种 CL 设定(Task-IL / Domain-IL / Class-IL)在 Split MNIST 和 Split CIFAR-100 上的难度差异;正则化方法在 Class-IL 上几乎完全失效。<a href="https://arxiv.org/abs/1904.07734">van de Ven 2019 ↗</a></span></span> 的三场景框架揭示了根本难度差异:
+
+**三场景的 output head 结构对比:**
+
+| 场景 | 测试时 task-ID | Output head | 模型需要做什么 |
+|---|---|---|---|
+| Task-IL | 已知 | 每任务独立 head(仅激活当前任务) | 在任务内分类,已知候选集 |
+| Domain-IL | 未知 | 共享 head(输出维度固定) | 在固定输出空间内分类,不需区分任务 |
+| Class-IL | 未知 | 共享 head(所有任务类别) | 在所有历史任务的所有类别中分类 |
+
+**Class-IL 为什么最难——三重障碍:**
+
+1. **Task-ID 推断问题**:模型不知道当前输入属于哪个任务,无法路由到对应的子分类器——必须在单一 head 上区分所有类别。
+
+2. **Output head 的历史偏差(recency bias)**:学新任务时只有新任务的类别产生大梯度更新,输出层的 logit 尺度向新任务倾斜——旧类别的 logit 被压制,即使特征层还记得旧任务。这是 Class-IL 独有的"分类器层遗忘"。
+
+3. **正则化方法的根本失效**:EWC 保护了特征层参数,但 output head 的新类别节点初始化会干扰旧类别节点的梯度——Fisher 对角线无法捕捉这种跨类别的输出层干扰。van de Ven et al. 实验显示,EWC 在 Class-IL 上准确率接近 chance level。
+
+**补救策略:**
+
+- **Replay + prototype classifier**(如 iCaRL):用 exemplar 均值做最近邻分类,绕开 output head 偏差。
+- **任务无关特征学习**:预训练冻结 backbone,只更新轻量分类头——减少特征漂移。
+- **经验修正(bias correction)**:在 Class-IL 测试时对旧类别 logit 做温度调整或加权,抵消 recency bias。
+
+---
+
+### D7. LLM 的遗忘 vs. 能力干扰——测量方法与任务顺序敏感性
+
+**LLM 的"遗忘"与经典 CL 的关键区别:**
+
+| 维度 | 经典 CL(小模型/分类任务) | LLM post-training |
+|---|---|---|
+| 任务粒度 | 清晰(Task 1/2/3…) | 模糊("数学推理""代码""安全对齐"大量重叠) |
+| 遗忘的表现 | 旧任务分类准确率下降 | 能力**干扰**(interference):新能力激活路径覆盖旧能力激活路径,非简单"忘记" |
+| 测量难度 | 用 $a_{T,j}$ 矩阵直接量化 | 需要专项 benchmark(MMLU/GSM8K/HumanEval…)追踪各能力 |
+| 边界清晰度 | 显式任务边界 | 无明确边界;SFT→DPO→RL 是**软边界** |
+
+**如何测量 LLM 的 CL 质量:**
+
+1. **能力矩阵追踪**:在每个对齐阶段结束后,在若干"探针 benchmark"(覆盖通用推理、代码、数学、安全)上评测——相当于在 LLM 尺度上构建 $a_{i,j}$ 矩阵。
+2. **BWT 的 LLM 类比**:测量"SFT 后代码能力相比 pretrain baseline 的变化"——若为负即为 alignment tax 的一部分。
+3. **激活/梯度分析**:检测哪些层的激活分布在新任务训练前后变化最大——定位"被覆盖"的知识存储层。
+
+**任务顺序敏感性:**
+
+LLM 的 CL 对任务顺序高度敏感,原因是:
+
+- 顺序训练的梯度方向依赖于前序任务形成的损失 landscape——先做 math SFT 再做 safety RLHF 与反序结果截然不同。
+- 较难任务(数学/代码)的优化需要大学习率大梯度,对后续小任务的参数损害更大。
+- **Alignment tax 的累积性**:SFT → DPO → RL 的序列中,每一步的遗忘税在下一步的 checkpoint 上累加。
+
+**KL 约束是隐式 EWC:**
+
+PPO-RLHF 中的 KL 惩罚项:
+
+$$r_{\text{KL}}(\theta) = \mathbb{E}\!\left[\log\frac{\pi_\theta(a|s)}{\pi_{\text{ref}}(a|s)}\right] \cdot (-\beta)$$
+
+将其在参考策略 $\pi_{\text{ref}}$ 附近做 Taylor 展开,KL 散度的二阶项正比于 Fisher 信息矩阵:
+
+$$\text{KL}(\pi_\theta \| \pi_{\text{ref}}) \approx \frac{1}{2}(\theta - \theta_{\text{ref}})^T F(\theta_{\text{ref}}) (\theta - \theta_{\text{ref}})$$
+
+即 **PPO 的 KL 惩罚 ≈ 以 Fisher 为权重矩阵的 EWC 全矩阵版本**——两者都是"以信息几何曲率为权重,对参数偏离参考点的二次惩罚"。区别在于:EWC 用 diagonal 近似且显式存储旧任务 Fisher;KL 约束用完整分布距离且动态锚定当前 reference 策略。DPO 中的 KL 项同理——reference model 在数学结构上等同于 EWC 中的 $\theta^*$。
+
+---
+
+### D8. LoRA-based CL 的 Adapter 干扰与路由
+
+**Adapter 干扰的来源:**
+
+朴素方案是为每个任务训练一套独立 LoRA 权重 $\Delta W_k = B_k A_k$,测试时通过 task-ID 路由。但有两个干扰来源:
+
+1. **参数空间重叠**:不同任务的低秩子空间可能大量重叠——若 $\text{span}(A_k) \cap \text{span}(A_j) \neq \emptyset$,合并后一个任务的 adapter 会干扰另一任务的激活。
+2. **无 task-ID 时的路由失败**:在 Class-IL 或 continual pretraining 设定下,测试时无 task-ID,无法路由到正确 adapter。
+
+**O-LoRA 的正交子空间方案:**
+
+O-LoRA 在任务 $k$ 的 LoRA 训练时,强制新任务的低秩子空间与历史所有任务的子空间正交:
+
+$$A_k V_{\text{prev}} \approx 0, \quad V_{\text{prev}} = \text{span}\bigl(\{A_j\}_{j<k}\bigr)$$
+
+通过梯度投影到 $V_{\text{prev}}$ 的正交补来实现。正交子空间保证不同任务 adapter 激活互不干扰——在已知 task-ID 的设定下近似零遗忘,且不需要存储旧任务数据。
+
+**局限:**
+
+- 可用正交维度随任务数增加而减少——在秩 $r$ 的 LoRA 中,最多支持约 $d/r$ 个完全正交任务($d$ 为权重矩阵维度)。
+- 无 task-ID 的 Class-IL 设定下,正交性不解决路由问题——仍需另外机制推断 task-ID 或用 prototype 分类。
+- 强制正交可能限制任务间的**正向迁移**——相关任务本可共享子空间以加速学习。
+
+**LLM post-training 中的实践:**
+
+序列对齐链条(SFT → DPO → RL)中,每阶段冻结主干、单独更新一套 LoRA,等价于 task-ID 已知的参数隔离方案——alignment tax 的累积被大幅限制在 LoRA 层内,主干知识不被覆盖。代价是需要在部署时管理多套 adapter 及其合并/路由逻辑。
+
+---
+
 ## 参考文献 / References
 
 > 均为经典承重方法的原始出处,已逐条核对(标题 + arXiv ID)。点上标跳转、点 ↩ 返回。
@@ -281,4 +523,7 @@ class EWCTrainer:
 <li id="ref-4">Buzzega et al. <em>Dark Experience for General Continual Learning: a Strong, Simple Baseline</em>. NeurIPS 2020. <a href="https://arxiv.org/abs/2004.07211">arXiv:2004.07211</a> — DER:存 logit 做软目标蒸馏 + rehearsal. <a href="#fnref-4">↩</a></li>
 <li id="ref-5">Rusu et al. <em>Progressive Neural Networks</em>. 2016. <a href="https://arxiv.org/abs/1606.04671">arXiv:1606.04671</a> — 每任务新增列 + 侧向连接,结构性零遗忘. <a href="#fnref-5">↩</a></li>
 <li id="ref-6">Li and Hoiem. <em>Learning without Forgetting</em>. ECCV 2016. <a href="https://arxiv.org/abs/1606.09282">arXiv:1606.09282</a> — LwF:旧模型软输出作蒸馏目标,无需旧数据. <a href="#fnref-6">↩</a></li>
+<li id="ref-7">Schwarz et al. <em>Progress &amp; Compress: A scalable framework for continual learning</em>. ICML 2018. <a href="https://arxiv.org/abs/1805.06370">arXiv:1805.06370</a> — 双网络 active column + knowledge base;online EWC 用 Fisher EMA 跨任务累积,内存恒定. <a href="#fnref-7">↩</a></li>
+<li id="ref-8">De Lange, van de Ven, and Tuytelaars. <em>Continual evaluation for lifelong learning: Identifying the stability gap</em>. ICLR 2023. <a href="https://arxiv.org/abs/2205.13452">arXiv:2205.13452</a> — per-iteration 连续评估框架;发现任务切换后性能骤降后恢复的 stability gap 现象. <a href="#fnref-8">↩</a></li>
+<li id="ref-9">van de Ven and Tolias. <em>Three scenarios for continual learning</em>. 2019. <a href="https://arxiv.org/abs/1904.07734">arXiv:1904.07734</a> — 系统定义 Task-IL / Domain-IL / Class-IL 三场景;揭示正则化方法在 Class-IL 上近乎完全失效. <a href="#fnref-9">↩</a></li>
 </ol>

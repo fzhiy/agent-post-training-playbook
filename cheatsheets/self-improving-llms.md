@@ -274,6 +274,170 @@ if __name__ == "__main__":
 
 ---
 
+---
+
+## 深挖 Q&A / Deep-dive
+
+> 进阶面试题的详细解析。⚠️ 学习笔记,非作者研究成果。数字以原论文为准。
+
+---
+
+### Q1. STaR 只保留"答案正确"的样本:这会引入什么 selection bias?对学到的分布有什么形式化影响?
+
+**核心偏差**:STaR<a class="cite" href="#ref-1">1</a> 在每轮迭代中,只把最终答案正确的 chain-of-thought 纳入训练集。这在形式上等价于:
+
+$$p_{\text{train}}(r \mid x) \propto p_\theta(r \mid x) \cdot \mathbf{1}[\text{answer}(r) = a^*]$$
+
+其中 $r$ 是 rationale,$x$ 是问题,$a^*$ 是参考答案。
+
+三个结构性后果:
+
+1. **正确性 ≠ 推理质量**:一条 rationale 可能通过侥幸、捷径或"答案倒推"得到正确答案,但推理步骤本身是错误的。由于过滤只看最终答案,**错误推理路径被系统性地混入训练集**。这与 Lightman et al.<span class="cite-wrap"><a class="cite" id="fnref-9" href="#ref-9">9</a></span> 提出 process reward model(PRM)的动机一致:outcome supervision 无法区分"对的理由答对"和"错的理由答对"。
+
+2. **分布偏移积累**:第 $t$ 轮的训练集取自 $\pi_{\theta_{t-1}}$ 的条件分布,而不是真实推理分布 $p^*(r \mid x)$。每轮迭代后,$\pi_{\theta_t}$ 进一步偏离 $p^*$,过滤器的"正确率"信号变得越来越自我参照。
+
+3. **难题盲区**:对模型已经完全答不对的难题,过滤后训练集为空(hint-retry 兜一部分,但不能完全补救)。模型在这些题上既无梯度更新,也无法自举改进,造成"强者愈强、难题停滞"的马太效应。
+
+**缓解方向**:PRM 对每一步打分(而非只看最终答案)可减少步骤级错误;数据混合(保留原始 SFT 数据)防止分布完全漂移。
+
+---
+
+### Q2. 迭代自训练为什么会收窄分布(模型坍塌)?直觉 + 何时咬人?
+
+**直觉**:每轮"只保留高分样本"在统计上等价于截断抽样——每次只取分布的高密度区域。多轮下来,尾部低概率(但高多样性)的输出被系统性淘汰。
+
+Shumailov et al.<span class="cite-wrap"><a class="cite" id="fnref-10" href="#ref-10">10</a></span> 从理论和实验两个层面分析了**递归训练于自产数据**的后果:
+
+- **统计近似误差**:每次采样产出的数据集是有限的,尾部事件被低估甚至缺失。
+- **函数近似误差**:模型容量有限,进一步压缩了对低频模式的表达。
+
+两种误差在迭代中**叠加**,导致分布持续收窄。用不等式直觉刻画:
+
+$$H(\pi_{\theta_t}) \le H(\pi_{\theta_{t-1}}) \quad \text{(若每轮只保留 top-}k\text{ 样本)}$$
+
+熵单调下降,输出趋向重复和单一。
+
+**何时真正咬人**:
+
+| 场景 | 为何严重 |
+|---|---|
+| Self-Rewarding(模型给自己打分) | 评判者本身就在漂移,偏好数据与真实偏好的 gap 越来越大 |
+| 长链 chain-of-thought 任务 | 每一步的采样方差大;尾部解法(非常规推理路径)在过滤中首先消失 |
+| 多轮对话 / agent loop | context 中的历史也是自产数据,递归污染效应更强 |
+| 仅用自产数据、不混合人类数据 | 没有锚点,分布漂移无约束 |
+
+**缓解**:定期混入原始人类数据(防止漂移的锚点);提高采样温度保留多样性;使用 diversity reward 项明确奖励输出多样性。
+
+---
+
+### Q3. Self-Rewarding 的 judge-generator 耦合为什么会失效?
+
+在 Self-Rewarding<a class="cite" href="#ref-3">3</a> 里,**同一组参数**既是生成器(产出答案),又是评判者(给答案打分)。这带来一个结构性问题:**生成器的盲点会被评判者继承**。
+
+具体机制:
+
+1. **共同盲点**:若生成器不擅长某类推理(如反事实推理),它给这类推理打高分的概率也低于真实水平——因为评判能力与生成能力共享同一知识基础。偏好数据因此系统性地低估了这类能力。
+
+2. **自我确认偏差(Self-Confirmation Bias)**:模型倾向于给"听起来像自己风格"的答案打高分。这不是 hallucination 的随机错误,而是一种**系统性偏差**——偏好信号本身就在把模型拉向自己的已有风格,形成正反馈闭环。
+
+3. **错误共同漂移**:每轮 DPO 更新后,生成器和评判者同步朝偏好数据的方向移动。若偏好数据本身有误(来自有盲点的评判),下一轮的评判者也会在相同方向上加剧偏差——误差不是均值回归,而是**累积放大**。
+
+形式化地,设 $J_\theta$ 为评判分数函数,$G_\theta$ 为生成函数,两者共享 $\theta$。真实质量函数为 $q^*$。则:
+
+$$\mathbb{E}[J_\theta(y) - q^*(y)] \ne 0 \quad \text{且与 } G_\theta \text{ 的偏差方向相关}$$
+
+**对比**:外部 reward model(参数独立)至少在初始时刻与生成器偏差方向无关。但它有另一个问题:分布外泛化失效(见 Q5)。
+
+---
+
+### Q4. SPIN 收敛到 SFT 数据分布——为什么这是一个上界?实践中意味着什么?
+
+SPIN<a class="cite" href="#ref-4">4</a> 的理论收敛条件是:当且仅当 $\pi_{\theta_t} = p_\text{data}$(当前模型与人类 SFT 数据分布完全相同)时,损失梯度消失,训练停止。
+
+这在数学上给出了一个**严格的能力上界**:
+
+$$\text{SPIN 极限策略} = p_\text{data} \quad \text{(SFT 数据分布)}$$
+
+推论:
+
+1. **无法超越 SFT 数据质量**:若 SFT 数据中存在错误、偏见或能力盲区,SPIN 收敛后的模型也会继承这些缺陷。SPIN 只是让模型"更像人类 SFT 数据",不能发现超越该数据的新能力。
+
+2. **负样本质量随迭代下降**:第 $t$ 轮的负样本由 $\pi_{\theta_{t-1}}$ 生成;随着 $\pi_{\theta_t} \to p_\text{data}$,负样本质量越来越接近正样本质量,**对比信号越来越弱**。这在实践中表现为:早期迭代效果显著,后期迭代边际收益递减甚至归零。
+
+3. **与 STaR/ReST 的根本差异**:STaR 类方法以**任务正确性**为过滤信号,理论上可以超越 SFT 数据(只要存在正确 rationale 就能学到)。SPIN 以**与人类数据的区分能力**为目标,天花板由人类数据质量决定。
+
+**实践含义**:SPIN 适合作为"补齐 SFT 缺口"的工具(消除模型与人类数据分布之间的 gap),但不适合用作持续自我改进的无限循环——到了后期迭代,应切换为有外部验证信号的方法。
+
+---
+
+### Q5. Reward Model 过优化:reward 上升/真实质量下降的 scaling-law 形状是什么?
+
+Gao et al.<span class="cite-wrap"><a class="cite" id="fnref-8" href="#ref-8">8</a></span> 系统研究了**对 RM 优化程度**（用 KL 散度 $d$ 衡量）与**真实质量**的关系,发现两者的曲线形状取决于优化方式:
+
+- **Best-of-$N$ 采样**:proxy reward 大致随 $\sqrt{\log N}$ 增长（论文指出拟合困难,此为近似描述）,真实质量先升后平——过优化效应相对温和。
+- **RL(策略梯度)**:proxy reward 可以持续上升,但真实质量在某个 $d^*$ 之后**单调下降**。
+
+大致函数形式(论文中拟合):
+
+$$\text{gold reward} \approx d\,(\alpha - \beta \ln d)$$
+
+其中 $\alpha, \beta > 0$，$d = \sqrt{D_{\mathrm{KL}}}$，最优点 $d^* = \exp\!\left(\dfrac{\alpha - \beta}{\beta}\right)$（令 $\mathrm{d}R/\mathrm{d}d = 0$ 得到）。超过 $d^*$ 后,真实质量随 KL 增大而下降。
+
+**关键 scaling 结论**:$\alpha, \beta$ 的系数随 RM 参数量**平滑变化**——更大的 RM 有更高的 $d^*$,即过优化"临界点"更晚到来,但临界点一定存在。这说明**增大 RM 不能消除过优化风险,只能推迟**。
+
+**直觉**:RM 是在有限数据上拟合的近似,策略在 RM 的分布外区域(高 KL 处)找到了"钻空子"的捷径。这是 Goodhart's Law 在 RL 中的定量表述。
+
+**实践防线**:设置 KL 惩罚系数 $\beta$;定期用 held-out gold reward(如人工评估或可验证答案)检查;避免在单一 RM 上迭代轮次过多。
+
+---
+
+### Q6. 为什么 Ground-truth 可验证器(RLVR)比学习型 judge 更安全?
+
+RLVR(Reinforcement Learning with Verifiable Rewards)由 DeepSeekMath<span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a></span> 系统化地应用于数学推理:对于有确定性答案的任务(数学题、代码单元测试),直接用程序化检查结果正确性作为奖励信号,而非训练一个 reward model。
+
+安全性对比:
+
+| 维度 | 学习型 Judge / RM | Ground-truth 可验证器 |
+|---|---|---|
+| 信号真实性 | 近似(有拟合误差) | 精确(规则/符号执行) |
+| 过优化风险 | 高(可被策略"钻空子") | 极低(答案对错是二值事实) |
+| 分布外泛化 | 在训练分布外不可靠 | 与策略分布无关,始终可信 |
+| 盲点继承 | 可能与生成器共享盲点 | 无参数,无盲点 |
+| 适用范围 | 广泛(但不精确) | 仅限可机械验证的任务 |
+
+**为什么"钻空子"对 RM 容易而对可验证器难**:RM 的分布外行为未被约束,策略可以找到 RM 未见过的"高分但低质"输出。而程序化验证器只看最终结果是否符合规范——策略无法在"规范本身"上作弊(规范是外生的)。
+
+**局限**:RLVR 的适用范围取决于任务的可验证性。自然语言生成、摘要、创意写作等任务没有唯一正确答案,无法直接套用。因此 RLVR 与学习型奖励并非替代关系,而是互补——在可验证任务上优先用 RLVR,在开放生成任务上必须依赖 RM + KL 约束。
+
+---
+
+### Q7. 自我改进何时停滞?探索/多样性的角色是什么?如何经验性区分真实改进与 reward hacking?
+
+**停滞的三种根源**:
+
+1. **过滤信号饱和**:当模型对训练集中的所有问题都能答对,rejection sampling 产出的正确样本与已有训练数据几乎重复——梯度信号趋近于零。
+2. **分布收窄导致探索不足**:如 Q2 所述,分布熵下降后,模型不再采样到足够多样的 rationale,难以从错误路径中恢复或发现新策略。
+3. **任务难度超出 bootstrapping 能力**:对模型完全无能的问题,无法通过拒绝采样产出任何正确样本;需要外部课程(更简单的子问题、更强的教师模型)。
+
+**探索/多样性的角色**:自我改进本质上是一个**exploitation-exploration 权衡**。每轮只保留正确样本是纯 exploitation;为维持改进,需要:
+- **温度调高**:采样更多多样路径,以更大方差换取更高概率命中新的正确路径。
+- **多样性 reward**:在优化目标里加入熵正则或多样性项,防止模式坍塌。
+- **课程学习**:逐步引入更难问题,而不是在固定集上反复迭代。
+
+**区分真实改进与 reward hacking 的经验性方法**:
+
+| 指标 | 真实改进的信号 | Reward hacking 的信号 |
+|---|---|---|
+| Proxy reward vs Gold reward | 两者同步上升 | Proxy 涨但 Gold reward 持平或下降 |
+| Held-out 评估集 | 在**未见题型**上也涨点 | 只在训练分布内涨,分布外下降 |
+| 人工抽查输出质量 | 推理步骤质量可见提升 | 表面流畅,步骤逻辑漏洞增多 |
+| 输出多样性 | 分布熵维持或小幅下降 | 分布熵快速崩溃,输出高度重复 |
+| KL 散度趋势 | 缓慢增长且与 Gold 正相关 | KL 快速增大,超过 Gao et al. 的 $d^*$ |
+
+黄金标准始终是:**保留一个完全未被自训练过程接触的 held-out 评估集,定期用可信 oracle(人工或可验证答案)打分。** 若这个分数持续上升,才能认定为真实改进。
+
+---
+
 ## 参考文献 / References
 
 > 均为经典承重方法的原始出处,已逐条核对(标题 + arXiv ID)。点上标跳转、点 ↩ 返回。
@@ -286,4 +450,8 @@ if __name__ == "__main__":
 <li id="ref-5">Bai et al. <em>Constitutional AI: Harmlessness from AI Feedback</em>. 2022. <a href="https://arxiv.org/abs/2212.08073">arXiv:2212.08073</a> — 宪法引导自我批评与修订;RLAIF 用 AI preference 替代人工无害性标注. <a href="#fnref-5">↩</a></li>
 <li id="ref-6">Shinn et al. <em>Reflexion: Language Agents with Verbal Reinforcement Learning</em>. 2023. <a href="https://arxiv.org/abs/2303.11366">arXiv:2303.11366</a> — 语言反思存入 episodic memory,无权重更新的多轮自我纠错. <a href="#fnref-6">↩</a></li>
 <li id="ref-7">Madaan et al. <em>Self-Refine: Iterative Refinement with Self-Feedback</em>. 2023. <a href="https://arxiv.org/abs/2303.17651">arXiv:2303.17651</a> — 冻结模型自循环:生成→批评→修订,无训练跨任务涨点. <a href="#fnref-7">↩</a></li>
+<li id="ref-8">Gao et al. <em>Scaling Laws for Reward Model Overoptimization</em>. 2022. <a href="https://arxiv.org/abs/2210.10760">arXiv:2210.10760</a> — proxy reward 与 gold reward 随 KL 增大的分离曲线;RM 规模缩放律. <a href="#fnref-8">↩</a></li>
+<li id="ref-9">Lightman et al. <em>Let's Verify Step by Step</em>. 2023. <a href="https://arxiv.org/abs/2305.20050">arXiv:2305.20050</a> — 过程监督(PRM)优于结果监督(ORM);PRM800K 数据集. <a href="#fnref-9">↩</a></li>
+<li id="ref-10">Shumailov et al. <em>The Curse of Recursion: Training on Generated Data Makes Models Forget</em>. 2023. <a href="https://arxiv.org/abs/2305.17493">arXiv:2305.17493</a> — 递归训练于自产数据导致分布尾部消失(model collapse). <a href="#fnref-10">↩</a></li>
+<li id="ref-11">Shao et al. <em>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</em>. 2024. <a href="https://arxiv.org/abs/2402.03300">arXiv:2402.03300</a> — RLVR(可验证奖励 RL)+ GRPO;程序化验证替代学习型 RM. <a href="#fnref-11">↩</a></li>
 </ol>
