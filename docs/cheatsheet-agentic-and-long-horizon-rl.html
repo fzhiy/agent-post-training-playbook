@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic & Long-horizon RL / 长程 Agent 强化学习</title>
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" href="vendor/hl/github.min.css">
+<link rel="stylesheet" href="vendor/hl/github-dark.min.css" media="(prefers-color-scheme: dark)">
+<style>
+  :root{color-scheme:light dark}
+  body{max-width:820px;margin:0 auto;padding:1rem 1.1rem 4rem;
+       font:16px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;word-wrap:break-word}
+  h1,h2,h3{line-height:1.3;margin-top:1.6em}
+  h1{font-size:1.5rem}
+  h2{font-size:1.25rem;border-bottom:1px solid #8884;padding-bottom:.2em}
+  code{font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:.9em}
+  :not(pre)>code{background:#8882;padding:.1em .35em;border-radius:4px}
+  pre{margin:1em 0}
+  pre code.hljs{border-radius:8px}
+  table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}
+  th,td{border:1px solid #8886;padding:.4em .6em;text-align:left}
+  blockquote{border-left:3px solid #8888;margin:1em 0;padding:.2em 1em;color:#888}
+  a{color:#0a7}
+  nav.top{font-size:.88rem;margin-bottom:1rem}
+  .toc{border:1px solid #8884;border-radius:8px;padding:.4em .9em;margin:1.2em 0;font-size:.92rem;background:#8881}
+  .toc summary{cursor:pointer;color:#0a7;font-weight:600}
+  .toc ul{margin:.5em 0 .2em;padding-left:1.2em;list-style:none}
+  .toc li{margin:.15em 0}
+  .toc li.lv3{padding-left:1.1em;font-size:.95em;opacity:.8}
+  .toc a{color:inherit;text-decoration:none}
+  .toc a:hover{color:#0a7;text-decoration:underline}
+  .katex-display{overflow-x:auto;overflow-y:hidden;padding:.2em 0}
+  /* 引用: [N] = 跳转链接 → 底部 References; gist 宽屏浮于右页边 (Tufte/gwern), 窄屏隐藏。纯 CSS 零 JS。 */
+  .cite-wrap{display:inline}
+  .cite{color:#0a7;font-weight:600;font-size:.72em;vertical-align:super;padding:0 .12em;white-space:nowrap;text-decoration:none}
+  .cite::before{content:"["}
+  .cite::after{content:"]"}
+  .cite:hover{text-decoration:underline}
+  .cite-note{display:none}
+  @media(prefers-color-scheme:dark){body{background:#16181c;color:#ddd}}
+  /* 宽屏 (≥1180px): gist 默认浮现在右页边, 无需点击; [N] 仍可点击跳到底部书目 */
+  @media (min-width:1180px){
+    body{max-width:1200px}
+    #out{max-width:720px}
+    .cite-note{display:block;float:right;clear:right;
+      width:320px;margin:.15em -360px .9em 0;padding:0 0 0 .8em;
+      border-left:2px solid #0a7;
+      font-size:.8rem;line-height:1.55;font-weight:400;color:#555}
+  }
+  @media (min-width:1180px) and (prefers-color-scheme:dark){
+    .cite-note{color:#aaa}}
+</style>
+</head>
+<body>
+<nav class="top"><a href="index.html">← 复习索引 / Study Index</a></nav>
+<article id="out"><h1>Agentic &amp; Long-horizon RL / 长程 Agent 强化学习</h1><details class="toc" open><summary>目录 / Contents (12)</summary><ul><li class="lv2"><a href="#sec-0">0. 一句话演化 / The evolution</a></li><li class="lv2"><a href="#sec-1">1. 什么让任务&quot;长程&quot; / What makes it long-horizon</a></li><li class="lv2"><a href="#sec-2">2. 形式化 / Formalization (POMDP)</a></li><li class="lv2"><a href="#sec-3">3. 信用分配 / Credit assignment(核心难点)</a></li><li class="lv2"><a href="#sec-4">4. 奖励设计 / Reward design</a></li><li class="lv2"><a href="#sec-5">5. 算法要点 / Algorithm essentials</a></li><li class="lv2"><a href="#sec-6">6. 与单轮的衔接 / Bridge from single-turn</a></li><li class="lv2"><a href="#sec-7">分层面试题 / Stratified follow-ups</a></li><li class="lv3"><a href="#sec-8">L1 基础</a></li><li class="lv3"><a href="#sec-9">L2 进阶</a></li><li class="lv3"><a href="#sec-10">L3 深挖</a></li><li class="lv2"><a href="#sec-11">参考文献 / References</a></li></ul></details>
+<blockquote>
+<p>单轮推理 RL(GRPO / RLVR,见姊妹仓库 <a href="https://ac.fzhiy.net/post-training-playbook/cheatsheet-reasoning-rl-frontier.html">reasoning-rl-frontier</a>)的<strong>下一棒</strong>:把奖励信号从&quot;一问一答一奖励&quot;推广到<strong>多轮轨迹</strong>(思考→调用工具→观察)*。</p>
+<p>⚠️ <strong>学习笔记,非作者研究成果</strong>(见 README 诚信声明)。数字 / 结论以原论文为准,不确定处标注。</p>
+</blockquote>
+<h2 id="sec-0">0. 一句话演化 / The evolution</h2>
+<p><code>单轮 RLHF(prompt→response→reward)</code> → <code>单轮可验证 RLVR(对/错→reward)</code> → <strong><code>多轮 agentic RL(轨迹→稀疏终端 reward)</code></strong>。
+变的不是损失函数,而是 <strong>episode 的形状</strong>:一条 episode 是 <code>(reasoning, tool_call, observation)</code> 反复多轮<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">让 LLM 把推理与工具调用交错(think→act→observe),边想边行动。<a href="https://arxiv.org/abs/2210.03629">Yao 2022 ↗</a></span></span>,reward 往往只在<strong>最后</strong>(任务成功与否)给一次。</p>
+<h2 id="sec-1">1. 什么让任务&quot;长程&quot; / What makes it long-horizon</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>单轮推理 RL</th>
+<th>长程 agentic RL</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>episode 长度</td>
+<td>1 轮</td>
+<td>数轮~数十轮</td>
+</tr>
+<tr>
+<td>reward</td>
+<td>每条 response 一个</td>
+<td><strong>稀疏 / 延迟</strong>,常只在终端</td>
+</tr>
+<tr>
+<td>观测</td>
+<td>全可见(prompt)</td>
+<td><strong>部分可见</strong>(工具返回才知道)</td>
+</tr>
+<tr>
+<td>动作空间</td>
+<td>token</td>
+<td>token + <strong>工具调用</strong> + 何时停止</td>
+</tr>
+<tr>
+<td>主要难点</td>
+<td>偏好 / 正确性</td>
+<td><strong>长程信用分配</strong> + 误差累积</td>
+</tr>
+</tbody></table>
+<h2 id="sec-2">2. 形式化 / Formalization (POMDP)</h2>
+<p>把一条轨迹 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo>=</mo><mo stretchy="false">(</mo><msub><mi>s</mi><mn>0</mn></msub><mo separator="true">,</mo><msub><mi>a</mi><mn>0</mn></msub><mo separator="true">,</mo><mo>…</mo><mo separator="true">,</mo><msub><mi>s</mi><mi>T</mi></msub><mo separator="true">,</mo><msub><mi>a</mi><mi>T</mi></msub><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">\tau=(s_0,a_0,\dots,s_T,a_T)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner">…</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">T</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">T</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span></span></span></span> 看作 POMDP。终端任务奖励 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo stretchy="false">(</mo><mi>τ</mi><mo stretchy="false">)</mo><mo>∈</mo><mo stretchy="false">{</mo><mn>0</mn><mo separator="true">,</mo><mn>1</mn><mo stretchy="false">}</mo></mrow><annotation encoding="application/x-tex">R(\tau)\in\{0,1\}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0077em;">R</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∈</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">{</span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">1</span><span class="mclose">}</span></span></span></span>(成功/失败)或标量分。轨迹回报</p>
+<p><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>G</mi><mi>t</mi></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>0</mn></mrow><mrow><mi>T</mi><mo>−</mo><mi>t</mi></mrow></munderover><msup><mi>γ</mi><mi>k</mi></msup><mtext> </mtext><msub><mi>r</mi><mrow><mi>t</mi><mo>+</mo><mi>k</mi></mrow></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">G_t=\sum_{k=0}^{T-t}\gamma^{k}\,r_{t+k}.</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:3.1304em;vertical-align:-1.3021em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.8283em;"><span style="top:-1.8479em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span><span class="mrel mtight">=</span><span class="mord mtight">0</span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span><span style="top:-4.3em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">T</span><span class="mbin mtight">−</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.3021em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0556em;">γ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></p>
+<p>实务里常把&quot;一轮(turn)&quot;作为决策粒度(turn-level MDP),而梯度仍落在该轮<strong>生成的 token</strong> 上 —— 即 <strong>turn-level 信用 + token-level 更新</strong>。</p>
+<h2 id="sec-3">3. 信用分配 / Credit assignment(核心难点)</h2>
+<p>终端只有一个 reward,要回答:<strong>这几十轮里,哪一轮、哪个 token 该被奖励/惩罚?</strong></p>
+<ul>
+<li><strong>trajectory-level</strong>:整条轨迹共享一个 advantage —— 最简单,但把&quot;好轨迹里的坏步&quot;也一起奖励了。</li>
+<li><strong>turn-level</strong>:给每一轮一个 advantage(需要 step reward 或价值估计)。</li>
+<li><strong>token-level</strong>:最细;通常由 turn-level advantage <strong>广播</strong>到该轮 token。</li>
+</ul>
+<p>GRPO<span class="cite-wrap"><a class="cite" id="fnref-2" href="#ref-2">2</a><span class="cite-note">同一任务采样一组 rollout,用组内相对回报当 baseline、免去 critic。<a href="https://arxiv.org/abs/2402.03300">Shao 2024 ↗</a></span></span> 的思路天然可搬过来:<strong>同一任务采样一组轨迹,用组内相对回报当 baseline</strong>(无需 critic):</p>
+<p><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>A</mi><mo stretchy="false">(</mo><msub><mi>τ</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo>=</mo><mfrac><mrow><mi>R</mi><mo stretchy="false">(</mo><msub><mi>τ</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo>−</mo><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi></mrow><mo stretchy="false">(</mo><mi>R</mi><mo stretchy="false">)</mo></mrow><mrow><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">d</mi></mrow><mo stretchy="false">(</mo><mi>R</mi><mo stretchy="false">)</mo><mo>+</mo><mi>ϵ</mi></mrow></mfrac><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">A(\tau_i)=\frac{R(\tau_i)-\mathrm{mean}(R)}{\mathrm{std}(R)+\epsilon}.</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:2.363em;vertical-align:-0.936em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.427em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathrm">std</span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0077em;">R</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord mathnormal">ϵ</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0077em;">R</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathrm">mean</span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0077em;">R</span><span class="mclose">)</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.936em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mord">.</span></span></span></span></span></p>
+<blockquote>
+<p>过程奖励 <strong>PRM</strong><span class="cite-wrap"><a class="cite" id="fnref-3" href="#ref-3">3</a><span class="cite-note">对每一步推理打分(过程监督),不只看最终对错。<a href="https://arxiv.org/abs/2305.20050">Lightman 2023 ↗</a></span></span>(给每步打分)对长程信用分配更友好,但<strong>标注/训练更贵</strong>且自身可能被 hack;<strong>ORM</strong>(只看结果)便宜但信用分配粗。长程场景常是两者折中。</p>
+</blockquote>
+<h2 id="sec-4">4. 奖励设计 / Reward design</h2>
+<ul>
+<li><strong>可验证结果奖励(RLVR→agentic)</strong><span class="cite-wrap"><a class="cite" id="fnref-4" href="#ref-4">4</a><span class="cite-note">用可自动判定的对错(而非奖励模型)作 RL 信号。<a href="https://arxiv.org/abs/2411.15124">Lambert 2024 ↗</a></span></span>:能自动判定的终端信号最稳 —— 单元测试通过、环境状态达成、答案可校验。</li>
+<li><strong>过程 / step reward</strong>:中间里程碑给分,缓解稀疏性,但<strong>易被刷</strong>(agent 学会触发里程碑而不解决任务)。</li>
+<li><strong>长程 reward hacking</strong>:轨迹越长,捷径越多(空转凑步数、反复调用廉价工具)。缓解:终端可验证为主 + 步数/成本惩罚 + 对工具输出<strong>只读不学</strong>(见 §5 掩码)。</li>
+</ul>
+<h2 id="sec-5">5. 算法要点 / Algorithm essentials</h2>
+<p>多轮 PPO<span class="cite-wrap"><a class="cite" id="fnref-5" href="#ref-5">5</a><span class="cite-note">带 clip 的策略梯度,RLHF / agentic RL 的基线算法。<a href="https://arxiv.org/abs/1707.06347">Schulman 2017 ↗</a></span></span> / GRPO 的两个&quot;长程专属&quot;细节:</p>
+<ol>
+<li><strong>观测 token 掩码</strong>:工具返回 / 环境观测是<strong>注入</strong>进上下文的,不是 policy 生成的 —— 必须在损失里<strong>掩掉</strong>,否则等于让模型去&quot;拟合&quot;工具输出(类比 SFT 的 loss masking)。</li>
+<li><strong>advantage 广播 + 掩码</strong>:turn-level advantage 广播到该轮 agent 生成的 token,再乘以 action mask。</li>
+</ol>
+<pre><code class="hljs language-python"><span class="hljs-keyword">import</span> torch
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">group_relative_advantages</span>(<span class="hljs-params">returns, group_ids, eps=<span class="hljs-number">1e-6</span></span>):
+    <span class="hljs-string">&quot;&quot;&quot;GRPO 式组内相对 advantage(无 critic)。
+    returns:   (N,) 每条轨迹的终端回报(如成功={0,1} 或标量分)
+    group_ids: (N,) 同一任务的多条 rollout 共享一个 group id
+    &quot;&quot;&quot;</span>
+    adv = torch.zeros_like(returns)
+    <span class="hljs-keyword">for</span> g <span class="hljs-keyword">in</span> group_ids.unique():
+        m = group_ids == g
+        r = returns[m]
+        adv[m] = (r - r.mean()) / (r.std(unbiased=<span class="hljs-literal">False</span>) + eps)
+    <span class="hljs-keyword">return</span> adv
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">masked_pg_loss</span>(<span class="hljs-params">logp, adv_per_token, action_mask</span>):
+    <span class="hljs-string">&quot;&quot;&quot;策略梯度损失:只在 agent 自己生成的 token 上回传。
+    logp:          (B,T) 当前策略下所取 token 的 log-prob
+    adv_per_token: (B,T) 由 turn-level advantage 广播到 token
+    action_mask:   (B,T) 1=agent 生成的 token, 0=工具输出/观测(掩掉)
+    &quot;&quot;&quot;</span>
+    pg = -(logp * adv_per_token) * action_mask
+    <span class="hljs-keyword">return</span> pg.<span class="hljs-built_in">sum</span>() / action_mask.<span class="hljs-built_in">sum</span>().clamp_min(<span class="hljs-number">1</span>)
+</code></pre>
+<blockquote>
+<p>rollout 阶段要<strong>在循环里真实执行工具/环境</strong>(常异步),轨迹更长 → 采样更贵 → 是 agentic RL 的主要系统瓶颈之一。</p>
+</blockquote>
+<h2 id="sec-6">6. 与单轮的衔接 / Bridge from single-turn</h2>
+<p>姊妹仓库的 <strong>GRPO / RLVR / 损失掩码</strong> 是积木;agentic RL ≈ 把它们<strong>作用在轨迹上</strong> + 解决&quot;稀疏终端 reward 的信用分配&quot;。会单轮 → 抓住&quot;轨迹化 + 掩码 + 组相对 baseline&quot;三点即可迁移。</p>
+<hr>
+<h2 id="sec-7">分层面试题 / Stratified follow-ups</h2>
+<h3 id="sec-8">L1 基础</h3>
+<ol>
+<li>什么样的任务算&quot;长程(long-horizon)&quot;?举两个 LLM agent 的例子。</li>
+<li>为什么单轮 RLHF/RLVR 不足以训练多轮工具使用 agent?</li>
+<li>稀疏 / 延迟奖励为什么难?</li>
+<li>训练时为什么要把<strong>工具返回的 token</strong> 掩掉?</li>
+</ol>
+<h3 id="sec-9">L2 进阶</h3>
+<ol start="5">
+<li>trajectory-level / turn-level / token-level advantage 各是什么?权衡?</li>
+<li>GRPO 的组内相对 baseline 如何搬到多轮?为什么能省掉 critic?</li>
+<li>PRM 与 ORM 在长程信用分配上的取舍?</li>
+<li>长程 reward hacking 有哪些典型形态?怎么缓解?</li>
+</ol>
+<h3 id="sec-10">L3 深挖</h3>
+<ol start="9">
+<li>终端只有一个 0/1 reward 时,如何把信用合理分到几十轮?给出至少两种思路并比较。</li>
+<li>如何把&quot;可验证结果奖励&quot;与&quot;过程监督&quot;结合,既稳又不被刷?</li>
+<li>agentic RL 的 rollout 为什么贵?有哪些工程缓解(异步执行、截断、长度惩罚)?各自代价?</li>
+<li>误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?</li>
+</ol>
+<hr>
+<h2 id="sec-11">参考文献 / References</h2>
+<blockquote>
+<p>均为经典承重方法的原始出处,已逐条核对(标题 + arXiv ID)。点上标跳转、点 ↩ 返回。</p>
+</blockquote>
+<ol>
+<li id="ref-1">Yao et al. <em>ReAct: Synergizing Reasoning and Acting in Language Models</em>. ICLR 2023. <a href="https://arxiv.org/abs/2210.03629">arXiv:2210.03629</a> — think→act→observe 范式. <a href="#fnref-1">↩</a></li>
+<li id="ref-2">Shao et al. <em>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</em>. 2024. <a href="https://arxiv.org/abs/2402.03300">arXiv:2402.03300</a> — GRPO:组内相对 baseline、去 critic. <a href="#fnref-2">↩</a></li>
+<li id="ref-3">Lightman et al. <em>Let's Verify Step by Step</em>. 2023. <a href="https://arxiv.org/abs/2305.20050">arXiv:2305.20050</a> — 过程监督 / PRM(PRM800K). <a href="#fnref-3">↩</a></li>
+<li id="ref-4">Lambert et al. <em>Tülu 3: Pushing Frontiers in Open Language Model Post-Training</em>. 2024. <a href="https://arxiv.org/abs/2411.15124">arXiv:2411.15124</a> — RLVR:以可验证对错为终端奖励. <a href="#fnref-4">↩</a></li>
+<li id="ref-5">Schulman et al. <em>Proximal Policy Optimization Algorithms</em>. 2017. <a href="https://arxiv.org/abs/1707.06347">arXiv:1707.06347</a> — PPO(策略梯度基线). <a href="#fnref-5">↩</a></li>
+</ol></article>
+</body>
+</html>

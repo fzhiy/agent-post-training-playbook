@@ -31,7 +31,25 @@
   .toc a{color:inherit;text-decoration:none}
   .toc a:hover{color:#0a7;text-decoration:underline}
   .katex-display{overflow-x:auto;overflow-y:hidden;padding:.2em 0}
+  /* 引用: [N] = 跳转链接 → 底部 References; gist 宽屏浮于右页边 (Tufte/gwern), 窄屏隐藏。纯 CSS 零 JS。 */
+  .cite-wrap{display:inline}
+  .cite{color:#0a7;font-weight:600;font-size:.72em;vertical-align:super;padding:0 .12em;white-space:nowrap;text-decoration:none}
+  .cite::before{content:"["}
+  .cite::after{content:"]"}
+  .cite:hover{text-decoration:underline}
+  .cite-note{display:none}
   @media(prefers-color-scheme:dark){body{background:#16181c;color:#ddd}}
+  /* 宽屏 (≥1180px): gist 默认浮现在右页边, 无需点击; [N] 仍可点击跳到底部书目 */
+  @media (min-width:1180px){
+    body{max-width:1200px}
+    #out{max-width:720px}
+    .cite-note{display:block;float:right;clear:right;
+      width:320px;margin:.15em -360px .9em 0;padding:0 0 0 .8em;
+      border-left:2px solid #0a7;
+      font-size:.8rem;line-height:1.55;font-weight:400;color:#555}
+  }
+  @media (min-width:1180px) and (prefers-color-scheme:dark){
+    .cite-note{color:#aaa}}
 </style>
 </head>
 <body>
