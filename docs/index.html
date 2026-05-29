@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Post-Training Playbook</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;color:#222;background:#fafafa}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e6e6e6;padding:.9rem 1rem;z-index:5}
+h1{margin:.1rem 0;font-size:1.15rem}
+.sub{color:#888;font-size:.8rem;margin:.2rem 0 .6rem}
+#q{width:100%;max-width:980px;padding:.6rem .8rem;font-size:1rem;border:1px solid #ccc;border-radius:10px;background:transparent;color:inherit}
+main{max-width:980px;margin:0 auto;padding:1rem}
+h2{font-size:1rem;margin:1.4rem 0 .6rem;color:#0a7}
+h2 small{color:#999;font-weight:400}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.6rem}
+.card{display:block;padding:.7rem .8rem;border:1px solid #e6e6e6;border-radius:10px;background:#fff;text-decoration:none;color:inherit;font-size:.9rem;line-height:1.35}
+.card:hover{border-color:#0a7}
+footer{max-width:980px;margin:1rem auto 3rem;padding:0 1rem;color:#999;font-size:.78rem}
+.hidden{display:none}
+@media(prefers-color-scheme:dark){body{color:#ddd;background:#16181c}header{background:#1b1e23;border-color:#2c2f36}.card{background:#22262c;border-color:#2c2f36}}
+</style></head>
+<body>
+<header>
+<h1>Agent Post-Training Playbook</h1>
+<div class="sub">1 篇 · Agent 后训练:RL/持续学习/自我改进 · 公式/代码静态渲染(零外部 CDN,国内直连)· 输入关键词过滤</div>
+<input id="q" type="search" placeholder="搜索主题… / filter topics…" autocomplete="off" autofocus>
+</header>
+<main><section><h2>Cheatsheets 题解 <small>1</small></h2><div class="grid"><a class="card" data-t="📍 学习路径 / roadmap cheatsheet-00-roadmap.html" href="cheatsheet-00-roadmap.html">📍 学习路径 / Roadmap</a></div></section></main>
+<footer>AI 辅助整理的学习笔记,WIP,欢迎 issue/PR 纠错。由 <code>node build.js</code> 生成(marked + KaTeX + highlight.js 构建时渲染)。</footer>
+<script>
+const q=document.getElementById('q');
+q.addEventListener('input',function(){
+  const v=q.value.trim().toLowerCase();
+  document.querySelectorAll('.card').forEach(function(c){c.classList.toggle('hidden', v.length>0 && c.dataset.t.indexOf(v)<0);});
+  document.querySelectorAll('main section').forEach(function(s){
+    const any=Array.prototype.some.call(s.querySelectorAll('.card'),function(c){return !c.classList.contains('hidden');});
+    s.classList.toggle('hidden', !any);
+  });
+});
+</script>
+</body></html>
