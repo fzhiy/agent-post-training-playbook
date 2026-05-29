@@ -1,7 +1,7 @@
 # Continual & Lifelong Learning / 持续与终身学习
 
 > 模型在**序列任务**上持续学习时,如何既习得新知识又不遗忘旧知识?这是"一次性训练后部署"范式以外的必答题,也是 LLM post-training 链条(pretrain → SFT → DPO → RL)的隐患所在。
->
+
 > ⚠️ **学习笔记,非作者研究成果**(见 README 诚信声明)。数字 / 结论以原论文为准,不确定处标注。
 
 ## 0. 一句话演化 / The evolution

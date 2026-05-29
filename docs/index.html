@@ -3,22 +3,25 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Post-Training Playbook</title>
 <style>
-:root{color-scheme:light dark}
+:root{color-scheme:light dark;--bg:#fdfcf7;--bg-soft:#f4f1ea;--ink:#2b2b2b;--muted:#6b6b6b;--accent:#b8390e;--primary:#1a4a8c;--line:#e6e0d4}
 *{box-sizing:border-box}
-body{margin:0;font:16px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;color:#222;background:#fafafa}
-header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e6e6e6;padding:.9rem 1rem;z-index:5}
-h1{margin:.1rem 0;font-size:1.15rem}
-.sub{color:#888;font-size:.8rem;margin:.2rem 0 .6rem}
-#q{width:100%;max-width:980px;padding:.6rem .8rem;font-size:1rem;border:1px solid #ccc;border-radius:10px;background:transparent;color:inherit}
+body{margin:0;font:16px/1.6 Georgia,"Songti SC","Noto Serif CJK SC","STSong",serif;color:var(--ink);background:var(--bg)}
+header{position:sticky;top:0;background:#fffdf8;border-bottom:1px solid var(--line);padding:.9rem 1rem;z-index:5}
+h1{margin:.1rem 0;font-size:1.2rem;color:#1a1a1a}
+.sub{color:var(--muted);font-size:.8rem;margin:.2rem 0 .6rem;font-family:system-ui,sans-serif}
+#q{width:100%;max-width:980px;padding:.6rem .8rem;font-size:1rem;border:1px solid var(--line);border-radius:10px;background:#fff;color:inherit;font-family:system-ui,sans-serif}
 main{max-width:980px;margin:0 auto;padding:1rem}
-h2{font-size:1rem;margin:1.4rem 0 .6rem;color:#0a7}
-h2 small{color:#999;font-weight:400}
+.featured{display:block;padding:.9rem 1.1rem;margin:.4rem 0 1.4rem;border:1px solid var(--accent);border-left:5px solid var(--accent);border-radius:12px;background:#b8390e0a;text-decoration:none;color:inherit}
+.featured strong{display:block;color:var(--accent);font-size:1.05rem;margin-bottom:.2rem}
+.featured span{color:var(--muted);font-size:.85rem;font-family:system-ui,sans-serif}
+h2{font-size:1rem;margin:1.4rem 0 .6rem;color:var(--primary)}
+h2 small{color:var(--muted);font-weight:400}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.6rem}
-.card{display:block;padding:.7rem .8rem;border:1px solid #e6e6e6;border-radius:10px;background:#fff;text-decoration:none;color:inherit;font-size:.9rem;line-height:1.35}
-.card:hover{border-color:#0a7}
-footer{max-width:980px;margin:1rem auto 3rem;padding:0 1rem;color:#999;font-size:.78rem}
+.card{display:block;padding:.7rem .8rem;border:1px solid var(--line);border-radius:10px;background:#fffdf8;text-decoration:none;color:inherit;font-size:.92rem;line-height:1.35}
+.card:hover{border-color:var(--accent);box-shadow:0 1px 6px #b8390e1a}
+footer{max-width:980px;margin:1rem auto 3rem;padding:0 1rem;color:var(--muted);font-size:.78rem;font-family:system-ui,sans-serif}
 .hidden{display:none}
-@media(prefers-color-scheme:dark){body{color:#ddd;background:#16181c}header{background:#1b1e23;border-color:#2c2f36}.card{background:#22262c;border-color:#2c2f36}}
+@media(prefers-color-scheme:dark){:root{--bg:#16181c;--bg-soft:#22262c;--ink:#dcdcdc;--muted:#9aa6b0;--accent:#e8845c;--primary:#7fb0e8;--line:#2c2f36}header{background:#1b1e23}#q{background:#22262c}.card{background:#22262c}.featured{background:#e8845c14}}
 </style></head>
 <body>
 <header>
@@ -26,7 +29,7 @@ footer{max-width:980px;margin:1rem auto 3rem;padding:0 1rem;color:#999;font-size
 <div class="sub">7 篇 · Agent 后训练:RL/持续学习/自我改进 · 公式/代码静态渲染(零外部 CDN,国内直连)· 输入关键词过滤</div>
 <input id="q" type="search" placeholder="搜索主题… / filter topics…" autocomplete="off" autofocus>
 </header>
-<main><section><h2>Cheatsheets 题解 <small>4</small></h2><div class="grid"><a class="card" data-t="📍 学习路径 / roadmap cheatsheet-00-roadmap.html" href="cheatsheet-00-roadmap.html">📍 学习路径 / Roadmap</a><a class="card" data-t="agentic &amp; long-horizon rl / 长程 agent 强化学习 cheatsheet-agentic-and-long-horizon-rl.html" href="cheatsheet-agentic-and-long-horizon-rl.html">Agentic &amp; Long-horizon RL / 长程 Agent 强化学习</a><a class="card" data-t="continual &amp; lifelong learning / 持续与终身学习 cheatsheet-continual-and-lifelong-learning.html" href="cheatsheet-continual-and-lifelong-learning.html">Continual &amp; Lifelong Learning / 持续与终身学习</a><a class="card" data-t="self-improving llms / 自我改进 cheatsheet-self-improving-llms.html" href="cheatsheet-self-improving-llms.html">Self-improving LLMs / 自我改进</a></div></section>
+<main><a class="featured" href="cheatsheet-00-roadmap.html"><strong>📍 📍 学习路径 / Roadmap</strong><span>建议从这里开始 · 按主题顺序刷 cheatsheet + drill</span></a><section><h2>Cheatsheets 题解 <small>3</small></h2><div class="grid"><a class="card" data-t="agentic &amp; long-horizon rl / 长程 agent 强化学习 cheatsheet-agentic-and-long-horizon-rl.html" href="cheatsheet-agentic-and-long-horizon-rl.html">Agentic &amp; Long-horizon RL / 长程 Agent 强化学习</a><a class="card" data-t="continual &amp; lifelong learning / 持续与终身学习 cheatsheet-continual-and-lifelong-learning.html" href="cheatsheet-continual-and-lifelong-learning.html">Continual &amp; Lifelong Learning / 持续与终身学习</a><a class="card" data-t="self-improving llms / 自我改进 cheatsheet-self-improving-llms.html" href="cheatsheet-self-improving-llms.html">Self-improving LLMs / 自我改进</a></div></section>
 <section><h2>Drills 手撕 <small>3</small></h2><div class="grid"><a class="card" data-t="drill: ewc + experience replay from scratch drill-ewc-replay.html" href="drill-ewc-replay.html">Drill: EWC + Experience Replay from scratch</a><a class="card" data-t="drill: self-refine loop from scratch drill-self-refine-loop.html" href="drill-self-refine-loop.html">Drill: Self-Refine Loop from scratch</a><a class="card" data-t="drill: turn credit assignment from scratch drill-turn-credit-assignment.html" href="drill-turn-credit-assignment.html">Drill: Turn credit assignment from scratch</a></div></section></main>
 <footer>AI 辅助整理的学习笔记,WIP,欢迎 issue/PR 纠错。由 <code>node build.js</code> 生成(marked + KaTeX + highlight.js 构建时渲染)。</footer>
 <script>

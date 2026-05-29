@@ -1,7 +1,7 @@
 # Agentic & Long-horizon RL / 长程 Agent 强化学习
 
 > 单轮推理 RL(GRPO / RLVR,见姊妹仓库 [reasoning-rl-frontier](https://ac.fzhiy.net/post-training-playbook/cheatsheet-reasoning-rl-frontier.html))的**下一棒**:把奖励信号从"一问一答一奖励"推广到**多轮轨迹**(思考→调用工具→观察)\*。
->
+
 > ⚠️ **学习笔记,非作者研究成果**(见 README 诚信声明)。数字 / 结论以原论文为准,不确定处标注。
 
 ## 0. 一句话演化 / The evolution

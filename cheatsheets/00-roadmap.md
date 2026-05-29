@@ -2,8 +2,18 @@
 
 > 本手册是 [post-training-playbook](https://github.com/fzhiy/post-training-playbook) 的姊妹篇,聚焦**后训练在 agent 上的延伸**。建议先过完后训练主线(SFT→DPO→GRPO、reward modeling、PEFT)再来。
 > 每个主题:先读 **cheatsheet** 理解 → 做对应 **drill** 手撕 → 用页内 L1/L2/L3 自测。
->
+
 > ⚠️ **学习笔记,非作者研究成果**;详见 README 诚信声明。
+
+## 总览 / Tracks
+
+| # | 主题 / Track | Cheatsheet 题解 | 手撕 / Drill | 状态 |
+|---|---|---|---|---|
+| 0 | 前置 / Prereq | 见姊妹仓库 [post-training-playbook](https://ac.fzhiy.net/post-training-playbook/) | PPO · GRPO · RLVR · RM · PEFT | — |
+| 1 | Agentic & Long-horizon RL | [题解](cheatsheet-agentic-and-long-horizon-rl.html) | [turn-credit-assignment](drill-turn-credit-assignment.html) | ✅ |
+| 2 | Continual & Lifelong Learning | [题解](cheatsheet-continual-and-lifelong-learning.html) | [ewc-replay](drill-ewc-replay.html) | ✅ |
+| 3 | Self-improving LLMs | [题解](cheatsheet-self-improving-llms.html) | [self-refine-loop](drill-self-refine-loop.html) | ✅ |
+| 🚧 | 规划中 / Planned | agent-foundations · agent-evaluation · agentic-rl-infra · agent-safety | react-tool-call-loop | 规划 |
 
 ## 0 · 前置 / Prereq
 - 后训练主线(见姊妹仓库):PPO / GRPO / RLVR、reward modeling、PEFT。
