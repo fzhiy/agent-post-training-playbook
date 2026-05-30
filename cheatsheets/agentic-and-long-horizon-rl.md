@@ -81,7 +81,34 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 > rollout 阶段要**在循环里真实执行工具/环境**(常异步),轨迹更长 → 采样更贵 → 是 agentic RL 的主要系统瓶颈之一。
 
-## 6. 与单轮的衔接 / Bridge from single-turn
+## 6. 训练管线:SFT 热启 → RL / Training pipeline
+
+agent 训练几乎都是两段式:**SFT 热启 → RL 精调**。开放动作空间 + 稀疏终端奖励下,预训练模型直接 RL 几乎探不到成功轨迹(成功率随步数指数衰减、group 常全零 → 梯度消失),也不会基本的工具调用格式;先用专家 / 成功轨迹 SFT 把格式与轨迹结构学会、把成功率抬到 RL 能产生有效梯度,再 RL 超越演示。
+
+- **AgentTuning**(arXiv:2310.12823):构造 AgentInstruct 多任务轨迹做**混合 SFT**,提升 agent 能力而不损通用能力。
+- **Agent-FLAN**(arXiv:2403.12881):把「格式遵循」与「agent 推理」**拆开**做数据,并加**负样本**(教模型拒绝错误工具调用、抑制 agent 幻觉)——SFT 数据设计层面的改进。
+- **ReFT**(arXiv:2401.08967):SFT 热启(CoT)→ **在线 PPO** 在自采样推理路径上精调,提升泛化(无需额外题)。
+- **ReSearch**(arXiv:2503.19470):**纯 RL** 学会把搜索调用与 CoT 交错,无监督推理步标注——把工具使用直接 RL 进去。
+
+## 7. 代表性 agent-RL 配方 / Representative recipes
+
+| 配方 | 场景 | 关键点 |
+|---|---|---|
+| **ToolRL**(2504.13958) | 工具调用 | 工具学习的**细粒度 reward shaping**(格式 + 结果 + 冗余) |
+| **RAGEN / StarPO**(2504.20073) | 多轮交互 | **trajectory-level RL**;发现 **Echo Trap**(回声陷阱)坍塌 → StarPO-S 稳定化 |
+| **WebRL**(2411.02337) | web agent | **自进化在线课程**(从失败 / 难度边界任务生成新题)+ ORM;WebArena-Lite 上 Llama-3.1-8B 4.8%→42.4% |
+| **SWE-RL**(2502.18449,Meta) | 代码修复 | 在开源软件演化数据上用**规则奖励** RL;SWE-bench Verified 41.0%(Llama3-70B) |
+
+**2025 RL 改进(算法变体 + 系统)**:
+
+- **DAPO**(2503.14476,ByteDance):**clip-higher**(上调正向 clip 上界防熵坍塌)+ overlong reward shaping + dynamic sampling + token-level PG loss。
+- **CISPO**(MiniMax-M1,2506.13585):**截断 IS 权重(per-token)而非把低概率 token 置零**,保留所有 token 的梯度贡献(含罕见「反思」token)。
+- **VAPO**(2504.05118):价值增强 PPO(value-augmented),解决 value 偏差 + 异质序列长度。
+- **AReaL**(2505.24298)**(系统级,非算法变体)**:**全异步 RL 系统**,解耦生成与训练(见 §5 rollout 贵)。
+
+> ⚠️ 表 / 列表中数字为**原文报告**(模型 / 配置见原文);benchmark 快变且易受污染,公开复现结论可能不同。
+
+## 8. 与单轮的衔接 / Bridge from single-turn
 
 姊妹仓库的 **GRPO / RLVR / 损失掩码** 是积木;agentic RL ≈ 把它们**作用在轨迹上** + 解决"稀疏终端 reward 的信用分配"。会单轮 → 抓住"轨迹化 + 掩码 + 组相对 baseline"三点即可迁移。
 
@@ -189,9 +216,25 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
+<details class="qa"><summary>13. 为什么 agent RL 几乎都要先 SFT 热启?直接从预训练模型 RL 会怎样?</summary>
+
+答:开放动作空间 + 稀疏终端奖励下,预训练模型直接 RL 几乎探不到成功轨迹(成功率随步数指数衰减、group 常全零 → 梯度消失),且不会基本的工具调用格式。先用专家 / 成功轨迹 SFT 让模型掌握格式与轨迹结构、把成功率抬到 RL 能产生有效梯度的水平,再 RL 超越演示。AgentTuning / Agent-FLAN 是 SFT 数据侧代表,ReFT 是「SFT→在线 PPO」两段式代表。
+
+**追问：** SFT 热启过度会带来什么问题? → 过度 SFT 把策略钉死在演示分布上,RL 阶段探索空间被压窄、易过早收敛到「模仿」而非「超越」;且 SFT 数据的格式 / 风格偏置会被 RL 继承放大——热启到「能稳定产出可用轨迹」即止,别把 SFT 当主训练。
+
+</details>
+
+<details class="qa"><summary>14. RAGEN 报告的 Echo Trap 是什么?与单轮 GRPO 的全零组退化有何不同?</summary>
+
+答:Echo Trap(回声陷阱,RAGEN/StarPO)是多轮 agent RL 的一种训练坍塌:模型逐渐在不同状态下重复同一套「奏效过」的措辞 / 动作模板(自我回声),推理多样性与熵下降、奖励方差塌缩,表面 reward 平稳实则停止学习。StarPO-S 的缓解:基于方差 / 熵的轨迹过滤(丢弃低多样性 rollout)+ 更强的 KL/clip 控制以保住探索。
+
+**追问：** 它与全零组退化的根因和解法有何不同? → 全零组是「没有正信号」→ 梯度消失(探索**不足**),解法是难度课程 / 可验证里程碑补正例;Echo Trap 是「有正信号但坍缩到单一模式」→ 多样性消失(探索**坍塌**),解法是多样性 / 熵过滤 + 熵正则。前者缺正例,后者正例同质化。
+
+</details>
+
 ### L3 深挖
 
-<details class="qa"><summary>13. 终端只有一个 0/1 reward 时,如何把信用合理分到几十轮?给出至少两种思路并比较。</summary>
+<details class="qa"><summary>15. 终端只有一个 0/1 reward 时,如何把信用合理分到几十轮?给出至少两种思路并比较。</summary>
 
 答:①**GRPO 组相对 baseline**:同任务多条轨迹共享终端 return 作归一化 baseline,简单无需 critic,但信用在轨迹内仍均摊;②**turn-level GAE**:引入轻量 turn-level value 头,用 $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ 把终端 return 分解为逐轮 TD 误差,信用更精准但需 critic bootstrap;③**PRM step reward**:用蒙特卡洛 rollout 估计每步未来成功率变化作步级 reward,信用最细但采样成本最高。三者折中:先 GRPO 训练基础能力,稳定后加 turn-level value 头。
 
@@ -199,7 +242,7 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
-<details class="qa"><summary>14. 如何把"可验证结果奖励"与"过程监督"结合,既稳又不被刷?</summary>
+<details class="qa"><summary>16. 如何把"可验证结果奖励"与"过程监督"结合,既稳又不被刷?</summary>
 
 答:以终端可验证信号(unit test pass / 环境状态)为主奖励——难 hack;用**可验证里程碑**作中间 step reward(子函数单元测试通过而非神经网络打分),缓解稀疏性而不引入可被 gaming 的 proxy。同时加 KL 惩罚 $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ 防 overoptimization,以及步数惩罚压制 looping。
 
@@ -207,7 +250,7 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
-<details class="qa"><summary>15. agentic RL 的 rollout 为什么贵?有哪些工程缓解(异步执行、截断、长度惩罚)?各自代价?</summary>
+<details class="qa"><summary>17. agentic RL 的 rollout 为什么贵?有哪些工程缓解(异步执行、截断、长度惩罚)?各自代价?</summary>
 
 答:rollout 需在循环里真实执行工具/环境(网络、代码执行等),延迟可达秒级,且轨迹更长导致 KV cache 占用大。缓解:①**异步执行**——并行跑多个 episode,GPU 不空等;代价是 rollout 完成时 policy 已经走了若干步(staleness),需要 IS 修正或 ESS 监控。②**轨迹截断**——超过最大步数强行终止;代价是截断轨迹的 return 不完整,需 bootstrap 补齐或直接丢弃。③**长度惩罚** $R'=R-\alpha|\tau|$——激励 agent 高效完成;代价是可能惩罚必要的长推理链。
 
@@ -215,7 +258,7 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
-<details class="qa"><summary>16. 误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?</summary>
+<details class="qa"><summary>18. 误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?</summary>
 
 答:每轮决策的小误差会改变后续观测,导致轨迹偏离训练分布,下一轮又在分布外状态上犯更大误差,误差随轮次**指数级放大**。这与 SFT 的 exposure bias 同构——训练时见到的是 ground-truth 前缀,推理时见到的是模型自己生成的前缀;长程 agent 尤为严重因为工具返回也依赖于之前行动。缓解:RL 本身通过让模型在自身 rollout 上训练来缓解 exposure bias;课程学习(从短 horizon 开始)可以降低初期误差累积速度;**DAgger(数据聚合)**在每轮用当前策略生成的状态请求专家标注,持续把策略实际访问的分布纳入训练,从数据层面直接对抗 distribution shift。然而即使用 online RL,理论上仍不能完全消除长轨迹内的 distribution shift:每条 rollout 内部,早期步的微小误差会在轨迹内**复利累积**——后续步在越来越偏离训练分布的状态上决策,RL 更新虽然针对已见过的 rollout 做修正,但无法"预见"同一批 rollout 内早期误差引发的后续雪球效应,这正是长程比短程对误差累积更脆弱的根本原因。
 

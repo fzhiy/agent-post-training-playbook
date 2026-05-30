@@ -140,7 +140,7 @@
 <nav class="top"><a href="index.html">← 复习索引 / Study Index</a></nav>
 <header class="hero"><div class="eyebrow">Cheatsheet · 题解</div><h1 class="hero-title">📍 学习路径 / Roadmap</h1><div class="hero-rule"></div></header>
 <div class="layout">
-<nav class="toc"><div class="toc-h">目录 / Contents</div><ul><li class="lv2"><a href="#sec-0">总览 / Tracks</a></li><li class="lv2"><a href="#sec-1">0 · 前置 / Prereq</a></li><li class="lv2"><a href="#sec-2">1 · Agentic &amp; Long-horizon RL</a></li><li class="lv2"><a href="#sec-3">2 · Continual &amp; Lifelong Learning</a></li><li class="lv2"><a href="#sec-4">3 · Self-improving LLMs</a></li></ul></nav>
+<nav class="toc"><div class="toc-h">目录 / Contents</div><ul><li class="lv2"><a href="#sec-0">总览 / Tracks</a></li><li class="lv2"><a href="#sec-1">0 · 前置 / Prereq</a></li><li class="lv2"><a href="#sec-2">1 · Agent Foundations</a></li><li class="lv2"><a href="#sec-3">2 · Agentic &amp; Long-horizon RL</a></li><li class="lv2"><a href="#sec-4">3 · Continual &amp; Lifelong Learning</a></li><li class="lv2"><a href="#sec-5">4 · Self-improving LLMs</a></li></ul></nav>
 <main id="out"><blockquote>
 <p>本手册是 <a href="https://github.com/fzhiy/post-training-playbook">post-training-playbook</a> 的姊妹篇,聚焦<strong>后训练在 agent 上的延伸</strong>。建议先过完后训练主线(SFT→DPO→GRPO、reward modeling、PEFT)再来。
 每个主题:先读 <strong>cheatsheet</strong> 理解 → 做对应 <strong>drill</strong> 手撕 → 用页内 L1/L2/L3 自测。</p>
@@ -168,20 +168,27 @@
 </tr>
 <tr>
 <td>1</td>
+<td>Agent Foundations</td>
+<td><a href="cheatsheet-agent-foundations.html">题解</a></td>
+<td><a href="drill-react-tool-call-loop.html">react-tool-call-loop</a></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>2</td>
 <td>Agentic &amp; Long-horizon RL</td>
 <td><a href="cheatsheet-agentic-and-long-horizon-rl.html">题解</a></td>
 <td><a href="drill-turn-credit-assignment.html">turn-credit-assignment</a></td>
 <td>✅</td>
 </tr>
 <tr>
-<td>2</td>
+<td>3</td>
 <td>Continual &amp; Lifelong Learning</td>
 <td><a href="cheatsheet-continual-and-lifelong-learning.html">题解</a></td>
 <td><a href="drill-ewc-replay.html">ewc-replay</a></td>
 <td>✅</td>
 </tr>
 <tr>
-<td>3</td>
+<td>4</td>
 <td>Self-improving LLMs</td>
 <td><a href="cheatsheet-self-improving-llms.html">题解</a></td>
 <td><a href="drill-self-refine-loop.html">self-refine-loop</a></td>
@@ -190,8 +197,8 @@
 <tr>
 <td>🚧</td>
 <td>规划中 / Planned</td>
-<td>agent-foundations · agent-evaluation · agentic-rl-infra · agent-safety</td>
-<td>react-tool-call-loop</td>
+<td>agent-evaluation · agentic-rl-infra · agent-safety</td>
+<td>—</td>
 <td>规划</td>
 </tr>
 </tbody></table>
@@ -199,17 +206,22 @@
 <ul>
 <li>后训练主线(见姊妹仓库):PPO / GRPO / RLVR、reward modeling、PEFT。</li>
 </ul>
-<h2 id="sec-2">1 · Agentic &amp; Long-horizon RL</h2>
+<h2 id="sec-2">1 · Agent Foundations</h2>
+<ul>
+<li><a href="cheatsheet-agent-foundations.html">agent-foundations</a> — agent 心智模型、ReAct、规划(Plan-Execute)、工具使用(Toolformer / function calling)、协议层(MCP/A2A)、生产工程模式、评测与失败模式。</li>
+<li>手撕:<a href="drill-react-tool-call-loop.html">react-tool-call-loop</a> — ReAct 循环(parse→route→observe→loop)+ SFT label masking。</li>
+</ul>
+<h2 id="sec-3">2 · Agentic &amp; Long-horizon RL</h2>
 <ul>
 <li><a href="cheatsheet-agentic-and-long-horizon-rl.html">agentic-and-long-horizon-rl</a> — 多轮 / 工具使用 RL、长程信用分配(turn vs trajectory)、RLVR→agentic、PRM/ORM、观测 token 掩码。</li>
 <li>手撕:<a href="drill-turn-credit-assignment.html">turn-credit-assignment</a> — 组相对优势 + 掩码 PG。</li>
 </ul>
-<h2 id="sec-3">2 · Continual &amp; Lifelong Learning</h2>
+<h2 id="sec-4">3 · Continual &amp; Lifelong Learning</h2>
 <ul>
 <li><a href="cheatsheet-continual-and-lifelong-learning.html">continual-and-lifelong-learning</a> — 灾难性遗忘、正则(EWC/SI/MAS)/ replay(GEM/A-GEM/DER)/ 参数隔离、AA/BWT/FWT、continual alignment / alignment tax。</li>
 <li>手撕:<a href="drill-ewc-replay.html">ewc-replay</a> — Fisher + EWC 惩罚 + replay,验证抗遗忘。</li>
 </ul>
-<h2 id="sec-4">3 · Self-improving LLMs</h2>
+<h2 id="sec-5">4 · Self-improving LLMs</h2>
 <ul>
 <li><a href="cheatsheet-self-improving-llms.html">self-improving-llms</a> — STaR / ReST / RFT、self-rewarding、self-play(SPIN)、RLAIF、反思(Reflexion/Self-Refine);自改进闭环与崩溃模式。</li>
 <li>手撕:<a href="drill-self-refine-loop.html">self-refine-loop</a> — 生成→批评→修订迭代,验证分数单调。</li>

@@ -1,0 +1,308 @@
+# Agent Foundations
+
+> The **prerequisite** before multi-turn RL: what an agent is, the ReAct loop, tool calling, the protocol layer (MCP/A2A), production engineering patterns, evaluation, and failure modes. Read this first, then head to [agentic-and-long-horizon-rl](cheatsheet-agentic-and-long-horizon-rl-en.html) to learn how to train it with RL.
+
+> ⚠️ **Study notes, not the author's own research** (see README disclaimer). Numbers/conclusions follow the original papers; benchmark numbers move fast and are contamination-prone, so this page only records the **original-paper human baseline + what it tests**, never model SOTA.
+
+## 0. TL;DR
+
+- **Agent = LLM (policy) + tool I/O + memory + control loop**; what it has over a chatbot is "actions that change external-world state + autonomous multi-step".
+- The minimal skeleton = **ReAct**: Thought→Action→Observation loop until Final Answer; **the Observation MUST be injected by the environment, never fabricated by the model** (stop-token footgun).
+- Two routes to tool use: **text protocol** (ReAct / Toolformer) and **structured function calling** (JSON schema); training back-propagates only on agent-generated tokens (see the [react-tool-call-loop](drill-react-tool-call-loop.html) drill).
+- Planning: **Plan-and-Execute** (full upfront plan) vs **ReAct** (per-step decision); production usually mixes "high-level plan + per-step ReAct" + plan repair.
+- Protocol layer: **MCP** (Anthropic, connects tools/data, *vertical*) and **A2A** (Google, agent interop, *horizontal*); they standardize connection, they do **not** solve security (injection is the host's job).
+- Three long-horizon system bottlenecks: context $O(L^2)$ / cost $O(T^2)$, **lost-in-the-middle**, error compounding $p^T$.
+- Production patterns: **subagent orchestration** (≠ multi-agent debate), **tool retrieval** (100+ tools), tiered memory, **budget guard**.
+- Evaluation: SWE-bench / GAIA / OSWorld / WebArena / τ-bench each test different abilities; record only the human baseline and "what it tests".
+- Reliability metric: **pass@k** (can it do it) vs **pass^k** (is it stable); agent deployment looks at the latter.
+- The 6 failure modes have names (see §10); in interviews you should recite them + their mitigations.
+
+## 1. Mental model
+
+Treat the LLM as a **policy** $\pi_\theta(a \mid h)$: given history $h$ (dialogue + past observations), output the next action $a$ (a span of text, possibly containing a tool call). **Agent = policy + tool I/O + memory + control loop**:
+
+```
+obs ───▶ [LLM policy] ───▶ action ───▶ [environment / tools] ──┐
+   ▲                                                            │
+   └──────────────── new observation ◀─────────────────────────┘
+                 (loop until Final Answer or budget exhausted)
+```
+
+**Three-axis design framework** (any agent can be located on three axes):
+
+| Axis | Options (simple → complex) |
+|---|---|
+| Reasoning structure | direct answer → CoT<span class="cite-wrap"><a class="cite" id="fnref-2" href="#ref-2">2</a><span class="cite-note">Provides intermediate reasoning steps as few-shot exemplars, substantially improving reasoning tasks. <a href="https://arxiv.org/abs/2201.11903">Wei 2022 ↗</a></span></span> → ReAct → ToT<span class="cite-wrap"><a class="cite" id="fnref-4" href="#ref-4">4</a><span class="cite-note">Expands reasoning into a tree, self-evaluating intermediate "thoughts" for deliberate search. <a href="https://arxiv.org/abs/2305.10601">Yao 2023 ↗</a></span></span> / search |
+| Tool interface | none → text protocol (ReAct) → structured function calling → computer-use (screenshot+coordinates) |
+| Learning signal | prompt-only → trajectory SFT → RL (see the sibling agentic-RL page) |
+
+**Classic RL vs LLM-agent**:
+
+| Dimension | Classic RL agent | LLM agent |
+|---|---|---|
+| Policy | small net, trained from scratch | pretrained LLM, light post-training |
+| Action space | fixed low-dim | open text + tool calls |
+| Prior | almost none | vast world knowledge |
+| Sample efficiency | low (millions of steps) | high (zero-shot start from a prompt) |
+
+> ❌ **Misconception:** "a chatbot that can call tools is an agent." The key is not the tool but the **closed loop + autonomous multi-step + change of external state**: single-shot retrieval augmentation (RAG) is still one-shot Q&A; an agent must decide the next step from observations and keep acting until the goal is met.
+
+## 2. ReAct — the minimal agent skeleton
+
+ReAct<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">Interleaves reasoning and acting (think→act→observe) so the model thinks while it acts. <a href="https://arxiv.org/abs/2210.03629">Yao 2022 ↗</a></span></span> interleaves **reasoning (Thought)** and **acting (Action)**, each action calls a tool, and the **Observation** is injected back into the context:
+
+```
+Thought: I should look up X first.
+Action: search
+Action Input: X
+Observation: <tool return — injected by the environment, not generated by the model>
+Thought: now I know.
+Final Answer: …
+```
+
+**Why it hallucinates less than pure CoT**: pure chain-of-thought rolls forward on its own output and cannot correct intermediate facts; ReAct conditions each step on the **real tool return**, grounding the reasoning so a wrong fact can be corrected on the next turn.
+
+> ❌ **Misconception:** "ReAct always beats CoT." On **pure-reasoning** tasks ReAct does not necessarily beat CoT-self-consistency (in the original paper ReAct alone is weaker on HotpotQA and needs to be combined with CoT-SC); ReAct's value is on tasks that **need external knowledge / actions**.
+
+> ⚠️ **stop-token footgun:** at inference you MUST set `Observation:` as a stop sequence. Otherwise the model will **continue generating an `Observation: …` itself** (hallucinating the tool return) instead of stopping to wait for the environment to inject the real result — this is the most common ReAct production bug. Hands-on: [react-tool-call-loop](drill-react-tool-call-loop.html).
+
+## 3. Planning: Plan-and-Execute vs ReAct
+
+- **ReAct**: per-step decision (reactive) — decides the next action from the current observation each step; flexible but no global view.
+- **Plan-and-Execute / Plan-and-Solve**<span class="cite-wrap"><a class="cite" id="fnref-3" href="#ref-3">3</a><span class="cite-note">Zero-shot: first have the model "make a plan → decompose subtasks" then execute; beats Zero-shot-CoT. <a href="https://arxiv.org/abs/2305.04091">Wang 2023 ↗</a></span></span>: generate a **full plan** first, then execute step by step (the executor can even be a different model); globally consistent but the plan may go stale.
+- **Production usually mixes**: a high-level plan cuts the big steps + ReAct reacts within each step; on failure, **plan repair** (Reflexion<span class="cite-wrap"><a class="cite" id="fnref-5" href="#ref-5">5</a><span class="cite-note">"Verbally reinforces" by storing language reflections in episodic memory, without weight updates. <a href="https://arxiv.org/abs/2303.11366">Shinn 2023 ↗</a></span></span>-style reflection / ToT-style search / step-wise replan).
+
+**When pure plan-execute fails**: when the environment is uncertain and mid-run state changes a lot (tool returns are unexpected), a plan fixed at the start goes stale — here reactive ReAct or a mix with replan is more robust.
+
+## 4. Tool use
+
+**Toolformer**<span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">Self-supervised learning of "when/how" to call an API, keeping only useful self-labeled calls via a utility filter. <a href="https://arxiv.org/abs/2302.04761">Schick 2023 ↗</a></span></span>: learns to call APIs without human annotation. How: randomly insert candidate API calls into text → execute to get returns → a **utility filter** keeps only samples where "inserting that call + its return significantly lowers the model's loss on subsequent tokens" for SFT. I.e. it uses "did the call actually help predict what follows" to auto-filter useless / mis-placed calls.
+
+**Structured function calling**<span class="cite-wrap"><a class="cite" id="fnref-9" href="#ref-9">9</a><span class="cite-note">Introduced 2023-06: describe functions with JSON Schema, the model emits structured calls. <a href="https://openai.com/index/function-calling-and-other-api-updates/">OpenAI 2023 ↗</a></span></span>: describe the function signature with **JSON Schema**; the (fine-tuned) model directly emits a structured `{name, arguments}` call. **parallel tool calls** (returning several calls at once) require those calls to be **idempotent + mutually independent** (no data dependency), otherwise they cannot run in parallel.
+
+> ❌ **Misconception:** "function calling and ReAct are two opposing kinds of agent." Both are tool use, but at **different levels**: FC is a **structured format** for a tool call (the model is fine-tuned to emit JSON schema), ReAct is a **reason-act loop pattern** (a prompting paradigm); you can perfectly well "use a ReAct loop + issue tools via function calling each step." The SFT label-masking difference is in the [react drill](drill-react-tool-call-loop.html) and agentic-page Q11.
+
+## 5. Protocols: MCP & A2A
+
+| Protocol | Direction | What it standardizes |
+|---|---|---|
+| **MCP** (Model Context Protocol)<span class="cite-wrap"><a class="cite" id="fnref-7" href="#ref-7">7</a><span class="cite-note">Anthropic 2024-11 open protocol: client-server + JSON-RPC 2.0, 3 primitives (tools/resources/prompts). <a href="https://modelcontextprotocol.io">Anthropic 2024 ↗</a></span></span> | **vertical** (agent ↔ tools/data) | how a model connects to external tools and data: client-server, JSON-RPC 2.0, three primitives (**tools / resources / prompts**), transport (stdio / Streamable HTTP) |
+| **A2A** (Agent2Agent)<span class="cite-wrap"><a class="cite" id="fnref-8" href="#ref-8">8</a><span class="cite-note">Proposed by Google 2025-04, later under the Linux Foundation: agent interop, JSON-RPC over HTTP + agent card. <a href="https://a2a-protocol.org/latest/">Google 2025 ↗</a></span></span> | **horizontal** (agent ↔ agent) | how agents from different vendors interoperate: **agent card** (capability declaration) + task state machine + JSON-RPC over HTTP |
+
+> ❌ **Misconception:** "using MCP makes it safe." The protocol does **not** defend against prompt injection — malicious instructions hidden in a tool return can hijack the agent (see §10 + Greshake<span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">Indirect prompt injection: instructions inside external content (web pages / tool returns) hijack the LLM application. <a href="https://arxiv.org/abs/2302.12173">Greshake 2023 ↗</a></span></span>); defense is the **host/agent's** responsibility (least privilege, treat tool output as untrusted).
+
+## 6. Production patterns
+
+- **Subagent orchestration**: the main agent dispatches subtasks to **context-isolated** subagents (each with a limited tool set), decomposing in parallel or in sequence → prevents main-context blow-up and an over-long tool table.
+- **Tool retrieval**: with a 100+ tool pool, do **not** stuff all schemas into the prompt; instead retrieve the relevant tools by embedding **top-k** against the current subtask and inject only those.
+- **Tiered memory**: working (in-context) / episodic (external trajectory history) / retrieve-back-in; essential for long horizons.
+- **Budget guard**: a multi-dimensional budget (token + step count + tool-call count + wall-time); when any threshold is exceeded, force convergence / termination to stop looping from burning money.
+
+> ❌ **Misconception:** "subagent = multi-agent system." **A subagent is hierarchical decomposition** (one main goal delegated to subordinates, context-isolated); **multi-agent debate / collaboration** is several **peer** agents each holding a viewpoint then aggregating — different goals and communication structures (the latter is in the agentic page's multi-agent credit).
+
+## 7. Computer-use / GUI agent
+
+The action space changes from "text tools" to **screenshot → coordinate click / keyboard input**, operating a real GUI directly. Two bottlenecks:
+
+1. **grounding**: mapping a semantic intent ("click the login button") to **precise pixel coordinates** — imprecise visual localization is the main error source; in practice one often **prefers the accessibility tree** (a structured element tree) over raw screenshot pixels.
+2. **long-horizon**: GUI tasks have many steps (open app→navigate→fill form→submit), so error compounding (see §9) is severe.
+
+The evaluation arenas are **OSWorld** (desktop) and **WebArena** (web) in §8.
+
+## 8. Benchmarks
+
+> ⚠️ Model SOTA on these benchmarks **moves fast and is prone to training contamination**; this page **only lists the original-paper human baseline + what it tests**. For current SOTA check each official leaderboard, and mind contamination and scaffold-version differences.
+
+| Benchmark | What it tests | human baseline (original paper) |
+|---|---|---|
+| **SWE-bench**<span class="cite-wrap"><a class="cite" id="fnref-12" href="#ref-12">12</a><span class="cite-note">2294 real GitHub issues; edit the codebase to make tests pass. <a href="https://arxiv.org/abs/2310.06770">Jimenez 2023 ↗</a></span></span> | resolving real GitHub issues (edit codebase, pass unit tests), 2294 tasks | no human solve-rate in the original; at release the best model was only ~2% (Claude 2) — showing its difficulty |
+| **SWE-bench Verified**<span class="cite-wrap"><a class="cite" id="fnref-13" href="#ref-13">13</a><span class="cite-note">OpenAI 2024-08 human-validated 500-problem subset, excluding unsolvable/over-strict-test items. <a href="https://openai.com/index/introducing-swe-bench-verified/">OpenAI 2024 ↗</a></span></span> | the same, as a 500-problem **human-validated** subset (cleaner) | no human solve-rate reported |
+| **GAIA**<span class="cite-wrap"><a class="cite" id="fnref-14" href="#ref-14">14</a><span class="cite-note">General AI assistant: needs reasoning + multimodality + web + tools, in three difficulty levels. <a href="https://arxiv.org/abs/2311.12983">Mialon 2023 ↗</a></span></span> | general assistant (reasoning + multimodality + web + tools), three levels | **92%** (L1 93.9 / L2 91.8 / L3 87.3), original annotators |
+| **OSWorld**<span class="cite-wrap"><a class="cite" id="fnref-15" href="#ref-15">15</a><span class="cite-note">369 open-ended computer-use tasks on a real OS (multi-app/web). <a href="https://arxiv.org/abs/2404.07972">Xie 2024 ↗</a></span></span> | real-OS computer-use, 369 tasks | **72.36%** |
+| **WebArena**<span class="cite-wrap"><a class="cite" id="fnref-16" href="#ref-16">16</a><span class="cite-note">812 long-horizon tasks on real websites (e-commerce/forum/code/CMS). <a href="https://arxiv.org/abs/2307.13854">Zhou 2023 ↗</a></span></span> | real-web long-horizon tasks, 812 tasks | **78.24%** |
+| **AgentBench**<span class="cite-wrap"><a class="cite" id="fnref-17" href="#ref-17">17</a><span class="cite-note">8 interactive environments (OS/DB/KG/games/web) to evaluate LLM-as-agent. <a href="https://arxiv.org/abs/2308.03688">Liu 2023 ↗</a></span></span> | LLM-as-agent across 8 environments | none (designed for model-vs-model) |
+| **τ-bench**<span class="cite-wrap"><a class="cite" id="fnref-18" href="#ref-18">18</a><span class="cite-note">Multi-turn, policy-constrained customer-service tool-agent-user tasks; introduces the pass^k reliability metric. <a href="https://arxiv.org/abs/2406.12045">Yao 2024 ↗</a></span></span> | multi-turn, policy-constrained tool-user interaction (customer service) | none; the key contribution is the **pass^k** reliability metric |
+| **MLE-bench**<span class="cite-wrap"><a class="cite" id="fnref-19" href="#ref-19">19</a><span class="cite-note">75 Kaggle ML-engineering competitions, scored by medal rate (bronze/silver/gold). <a href="https://arxiv.org/abs/2410.07095">Chan 2024 ↗</a></span></span> | Kaggle ML engineering, 75 competitions, by medal rate | by Kaggle leaderboard percentile |
+
+## 9. Cost & reliability
+
+- **$O(T^2)$ cost**: every step re-reads the full context, and the context grows linearly with steps ($L_t \propto t$, full history concatenated), so total tokens $\propto \sum_{t=1}^{T} t = O(T^2)$. This is the core cost driver for long-horizon agents. Mitigations: context compression / summarization, KV eviction, decomposing subtasks into isolated subagents, prompt caching.
+- **Serial-latency lower bound**: steps have data dependencies, so **parallel tools** save the wait **within a step** but cannot break the **cross-step** serial latency lower bound — an 8-step task serializes at least 8 LLM decodes no matter how parallel.
+- **pass@k vs pass^k**: $\text{pass@}k$ = **at least one** success in $k$ tries (capability upper bound, optimistic); $\text{pass}^k$ = **all** $k$ succeed (reliability). **Agent deployment looks at pass^k** — a customer-service / code agent that wrecks the database 1-in-10 runs is unusable; τ-bench uses pass^k precisely to expose this instability.
+
+## 10. Failure modes
+
+| # | Failure mode | Mechanism | Mitigation |
+|---|---|---|---|
+| 1 | hallucinated tool call | calling a non-existent tool/arg, or fabricating an Observation when no stop is set | JSON schema validation + stop sequence + tool whitelist |
+| 2 | loop / stalemate | repeating the same action without progress | step budget + loop detection + forced final |
+| 3 | lost-in-the-middle<span class="cite-wrap"><a class="cite" id="fnref-10" href="#ref-10">10</a><span class="cite-note">Key info in the middle of a long context is easily ignored, in a U-shape. <a href="https://arxiv.org/abs/2307.03172">Liu 2024 ↗</a></span></span> | mid-context info ignored (U-shaped) | put key info at the ends + summarize + retrieve |
+| 4 | tool over/under-use | calling when it shouldn't / not calling when it should | reward / SFT shaping + tool retrieval |
+| 5 | tool-output injection | instructions hidden in a tool return hijack the agent | treat tool output as untrusted + least privilege + host defense |
+| 6 | benchmark reward hacking | exploiting eval loopholes instead of truly solving | verifiable terminal + adversarial test set + anti-contamination |
+
+---
+
+## Stratified follow-ups
+
+### L1 Basics
+
+<details class="qa"><summary>1. What is the essential difference between an agent and a chatbot? Does giving an LLM a search API make it an agent?</summary>
+
+Answer: The essential difference is **closed loop + autonomous multi-step + change of external state** — an agent decides the next step from observations and keeps acting until the goal is met, and its actions can change external-world state; a chatbot is single Q&A. Simply giving an LLM a search API for one retrieval-augmented call **is not yet an agent** (still single-turn); only when it can **autonomously decide** whether to keep querying, what to query, and when to stop based on tool returns does it enter the agent regime.
+
+**Follow-up:** agent = policy + what? → policy (LLM) + tool I/O + memory + control loop; treat the LLM as a policy $\pi_\theta(a\mid h)$ running in an "observe→act→new observation" loop.
+
+</details>
+
+<details class="qa"><summary>2. What are ReAct's Thought/Action/Observation? Why does it hallucinate less than pure CoT?</summary>
+
+Answer: Thought = reasoning, Action = call a tool, Observation = tool return (environment-injected). Pure CoT rolls forward on its own output and cannot externally correct intermediate facts; ReAct conditions each step on the **real tool return**, grounding the reasoning so a wrong fact can be corrected the next turn.
+
+**Follow-up:** what is the most common ReAct production bug? → the stop-token footgun: not setting `Observation:` as a stop sequence, so the model writes its own `Observation: …` hallucinated return instead of stopping to wait for the environment's real result.
+
+</details>
+
+<details class="qa"><summary>3. Are function calling and ReAct two opposing kinds of agent?</summary>
+
+Answer: No, they are at different levels. Function calling is a **structured format** for a tool call (the model is fine-tuned to emit a `{name, arguments}` JSON schema); ReAct is a **reason-act loop pattern** (a prompting paradigm). They compose: run a ReAct loop and issue tools via function calling each step.
+
+**Follow-up:** how do the two formats differ in label masking during training? → the masked set is the same (both mask tool-return tokens); the difference is that the fixed template parts of the JSON (`{"name":`, punctuation) are schema, not decisions, so over-training wastes gradient memorizing the template (see the react drill / agentic Q11).
+
+</details>
+
+<details class="qa"><summary>4. What problem does MCP solve? Does it guarantee agent safety?</summary>
+
+Answer: MCP (Model Context Protocol, Anthropic 2024-11) standardizes the **model ↔ external tools/data** connection (vertical): client-server + JSON-RPC 2.0 + three primitives (tools/resources/prompts). It does **not** guarantee safety — the protocol itself does not defend against prompt injection; malicious instructions in a tool return must be defended by the host/agent.
+
+**Follow-up:** how do MCP and A2A divide the work? → MCP is vertical (agent ↔ tools/data); A2A (Google 2025) is horizontal (agent ↔ agent, interop via agent card + task state machine).
+
+</details>
+
+<details class="qa"><summary>5. What is the difference between pass@k and pass^k? Which should agent deployment look at?</summary>
+
+Answer: $\text{pass@}k$ = at least one success in $k$ tries (measures **capability upper bound**, optimistic); $\text{pass}^k$ = all $k$ succeed (measures **reliability**). Agent deployment looks at **pass^k** — a customer-service/code agent that causes trouble 1-in-10 runs is unusable. τ-bench uses pass^k precisely to expose this instability.
+
+**Follow-up:** why is a long-horizon agent's pass^k far below its pass@k? → with per-step success rate $p<1$, the probability that all $k$ runs (or all steps) succeed decays exponentially with the number of steps/tries; long tasks have many steps, and any single step failing fails the whole trajectory, so reliability is far below "at least once can do it".
+
+</details>
+
+<details class="qa"><summary>6. Why is an agent's inference cost typically O(T²)?</summary>
+
+Answer: every step re-reads the entire context, and the context grows linearly with steps ($L_t \propto t$, full history concatenated), so total tokens $\propto \sum_{t=1}^T t = O(T^2)$. This is the main cost source for long-horizon agents and the motivation for context management (compress/summarize/evict).
+
+**Follow-up:** can parallel tool calls reduce this to O(T)? → No. Parallelism saves the **within-step** wait of multiple independent tools (lowering latency, not total tokens); the cross-step serial dependency and context accumulation remain, so the cost order is unchanged.
+
+</details>
+
+### L2 Intermediate
+
+<details class="qa"><summary>7. What is the trade-off between Plan-and-Execute and ReAct? When does pure plan-and-execute fail?</summary>
+
+Answer: ReAct decides per step (reactive), flexible but no global view; Plan-and-Execute generates a full plan first then executes (executor can be a different model), globally consistent but the plan may go stale. Pure plan-and-execute fails when the **environment is uncertain and mid-run state changes a lot** (tool returns are unexpected) — the plan fixed at the start cannot keep up. Production usually mixes "high-level plan + per-step ReAct" + plan repair.
+
+**Follow-up:** what are the ways to do plan repair? → Reflexion-style language reflection then replan, ToT-style search over alternative plans, or detect deviation and replan locally step-wise.
+
+</details>
+
+<details class="qa"><summary>8. How does Toolformer learn to call APIs without human annotation?</summary>
+
+Answer: self-supervision + a **utility filter**. Randomly insert candidate API calls into text → execute to get returns → keep only samples where "inserting that call and its return **significantly lowers the loss on subsequent tokens**" for SFT. I.e. it uses "did the call actually help predict what follows" as the utility signal, auto-filtering useless or mis-placed calls without any human labeling of which/when to call.
+
+**Follow-up:** what is the essential criterion of this utility filter? → compare the weighted loss on subsequent tokens under "with the API return" vs "without / empty return"; keep only when the former is clearly lower — essentially "how much did this tool call reduce the perplexity of what follows".
+
+</details>
+
+<details class="qa"><summary>9. What is the prerequisite constraint for parallel tool calls in structured function calling?</summary>
+
+Answer: returning multiple tool calls at once requires those calls to be **idempotent + mutually independent** (no data dependency): if call B needs call A's result, they cannot be parallel and must serialize until A returns. Parallelism only applies to mutually-unrelated calls like "get weather + get exchange rate"; dependent chained calls go in separate rounds.
+
+**Follow-up:** why can't parallelism break a long-horizon agent's serial-latency lower bound? → parallelism saves the within-step wait of independent calls; the cross-step data dependency (the next step uses the previous step's result) is still serial, so a T-step task serializes at least T LLM decodes.
+
+</details>
+
+<details class="qa"><summary>10. What is the difference between subagent orchestration and multi-agent debate?</summary>
+
+Answer: Subagent orchestration is **hierarchical decomposition** — the main agent dispatches subtasks to context-isolated, tool-limited subordinates; single goal, communication is "assign ↔ return result". Multi-agent debate/collaboration is several **peer** agents each holding a viewpoint, challenging each other then aggregating; the goal is to use diversity to improve correctness. The two differ in structure (hierarchical vs peer), communication, and purpose.
+
+**Follow-up:** what does subagent context isolation mainly solve? → it prevents main-agent context blow-up (the subtask's intermediate tokens don't flow back to the main thread) + an over-long tool table (each subagent only mounts relevant tools); the cost is that cross-subagent information sharing must be passed explicitly.
+
+</details>
+
+<details class="qa"><summary>11. With a 100+ tool pool, how do you manage it without blowing up the context?</summary>
+
+Answer: do not stuff all tool schemas into the prompt (it both blows up the context and lowers selection accuracy); instead do **tool retrieval**: vectorize each tool's description, do an embedding **top-k retrieval** against the current subtask query, and inject only the most relevant schemas. Essentially turning "tool selection" from one-shot full exposure into retrieval recall.
+
+**Follow-up:** what is the main failure mode of tool retrieval? → incomplete recall (the needed tool isn't retrieved → the agent can't finish) and description ambiguity (two similar tools get confused); mitigate with better tool descriptions + larger k + hierarchical retrieval if needed.
+
+</details>
+
+<details class="qa"><summary>12. What are the two bottlenecks of a computer-use / GUI agent? Why prefer the accessibility tree?</summary>
+
+Answer: ① **grounding** — mapping a semantic intent to precise pixel coordinates; imprecise visual localization is the main error source. ② **long-horizon** — GUI tasks have many steps and severe error compounding. One often prefers the **accessibility tree** (a structured element tree with role/label/coords) over raw screenshots, because structured elements locate "that button" more reliably than pixels, sidestepping part of the grounding error.
+
+**Follow-up:** if the accessibility tree is more reliable, why still need screenshots? → many interfaces (canvas, custom rendering, games) have no usable a11y tree, or the tree is incomplete; the screenshot is the universal fallback, and practice often fuses both.
+
+</details>
+
+<details class="qa"><summary>13. To evaluate a coding agent and a web agent, which benchmarks would you pick and why?</summary>
+
+Answer: coding agent → **SWE-bench / SWE-bench Verified** (resolve real GitHub issues by editing code to pass unit tests; Verified is the human-validated clean subset); web agent → **WebArena** (real-website long-horizon tasks, with a 78.24% human baseline), or **OSWorld** if it's desktop computer-use. The basis is "does the action space and task distribution match the target scenario".
+
+**Follow-up:** what caveat must accompany SOTA numbers on these benchmarks? → model SOTA moves fast + training contamination + scaffold-version differences (SWE-bench therefore released the human-validated Verified subset); you can only cite the current official-leaderboard value with a date, never treat a second-hand number as a stable fact.
+
+</details>
+
+### L3 Advanced
+
+<details class="qa"><summary>14. Designing context management for a long-horizon agent: how do O(T²) cost, lost-in-the-middle, and error compounding mitigate together?</summary>
+
+Answer: all three stem from "context inflating with steps", so a combination is needed: ① for **O(T²) cost** — **summarize** old turns + KV eviction (keep sink + recent window) + dispatch independent subtasks to context-isolated subagents, splitting one long context into several short ones; ② for **lost-in-the-middle** (mid-context info ignored, U-shaped) — put key info (goal, constraints) **at the ends** and use retrieval to **recall** relevant history into the recent window rather than relying on the model to find it in a long middle; ③ for **error compounding** $p^T$ — shorten the effective horizon (decompose + verifiable milestones per subtask), add loop detection and a budget guard for early stop. Synergy: summarization + subtask isolation lower both cost and horizon; retrieval + end-anchoring fix both lost-in-the-middle and grounding.
+
+**Follow-up:** what new risk does summarization itself introduce, and how to balance it? → lossy compression may discard key early info that turns out useful later (and if training saw the full history but inference only compresses, it creates a train-inference state-distribution mismatch); the balance is to keep a pointer / retrievable copy of "potentially-revisited" content and only summarize low-value turns.
+
+</details>
+
+<details class="qa"><summary>15. What is the threat model of tool-output prompt injection? Give a defense-in-depth.</summary>
+
+Answer: threat model (indirect prompt injection, Greshake 2023): the attacker hides malicious instructions in **external content** the agent will read (web pages, search results, tool returns, files); the agent executes them as instructions — it can be induced to leak context, abuse high-privilege tools, or make outbound requests. **Defense-in-depth**: ① mark all tool/external returns as **untrusted data** (isolated from system instructions, not executed as instructions); ② **least privilege** (minimal scope per tool; dangerous operations require confirmation); ③ output-side constraints (host-level policy gates on high-risk actions like outbound send / delete); ④ monitor anomalous tool-call sequences. Key insight: **the protocol (MCP) is not responsible for injection defense — the host/agent is.**
+
+**Follow-up:** why is "let the model judge whether an instruction is trustworthy" not a reliable defense? → it puts the security boundary back inside a model that the same injection can compromise; reliable defense should backstop **outside** the model with a deterministic privilege/policy layer (whitelist, scope, human confirmation) rather than relying on model self-discipline.
+
+</details>
+
+<details class="qa"><summary>16. Given benchmark reward hacking and data contamination, how do you design a hack-resistant agent evaluation?</summary>
+
+Answer: two problems — ① **reward hacking**: the agent exploits eval-implementation loopholes (editing test files, mocking outputs, empty functions passing CI) instead of truly solving; ② **contamination**: test samples leaked into training, inflating scores. Hack-resistant eval: use a **verifiable, hard-to-forge** success criterion (hidden extra unit tests, final environment-state checks, not assertions the agent can see), **rotate adversarial test sets** / living benchmarks (periodically swap items to prevent memorization), a **human-validated subset** (like SWE-bench Verified excluding cheatable/unsolvable items), report **pass^k** (to prevent gaming pass@k by many samples), and publish the eval harness for reproducibility.
+
+**Follow-up:** why can't an "ever-rising public leaderboard" be taken directly as agent capability progress? → high scores may come from contamination, scaffold engineering, or overfitting to that benchmark; what matters is whether it improves in lockstep on **newly released, contamination-resistant** living benchmarks and the pass^k reliability metric, with the harness and date verified.
+
+</details>
+
+---
+
+## References
+
+> All are primary sources for load-bearing methods, each web-verified (title + arXiv ID / official URL). Click a superscript to jump, click ↩ to return.
+
+<ol>
+<li id="ref-1">Yao et al. <em>ReAct: Synergizing Reasoning and Acting in Language Models</em>. ICLR 2023. <a href="https://arxiv.org/abs/2210.03629">arXiv:2210.03629</a> — think→act→observe paradigm. <a href="#fnref-1">↩</a></li>
+<li id="ref-2">Wei et al. <em>Chain-of-Thought Prompting Elicits Reasoning in Large Language Models</em>. NeurIPS 2022. <a href="https://arxiv.org/abs/2201.11903">arXiv:2201.11903</a> — CoT reasoning. <a href="#fnref-2">↩</a></li>
+<li id="ref-3">Wang et al. <em>Plan-and-Solve Prompting</em>. ACL 2023. <a href="https://arxiv.org/abs/2305.04091">arXiv:2305.04091</a> — plan first, then execute. <a href="#fnref-3">↩</a></li>
+<li id="ref-4">Yao et al. <em>Tree of Thoughts: Deliberate Problem Solving with LLMs</em>. NeurIPS 2023. <a href="https://arxiv.org/abs/2305.10601">arXiv:2305.10601</a> — tree-of-thoughts search. <a href="#fnref-4">↩</a></li>
+<li id="ref-5">Shinn et al. <em>Reflexion: Language Agents with Verbal Reinforcement Learning</em>. NeurIPS 2023. <a href="https://arxiv.org/abs/2303.11366">arXiv:2303.11366</a> — verbal reflection / episodic memory. <a href="#fnref-5">↩</a></li>
+<li id="ref-6">Schick et al. <em>Toolformer: Language Models Can Teach Themselves to Use Tools</em>. NeurIPS 2023. <a href="https://arxiv.org/abs/2302.04761">arXiv:2302.04761</a> — self-supervised tool use + utility filter. <a href="#fnref-6">↩</a></li>
+<li id="ref-7">Anthropic. <em>Model Context Protocol (MCP)</em>. 2024-11. <a href="https://modelcontextprotocol.io">modelcontextprotocol.io</a> — model↔tools/data standard (vertical). <a href="#fnref-7">↩</a></li>
+<li id="ref-8">Google. <em>Agent2Agent Protocol (A2A)</em>. 2025-04 (later under the Linux Foundation). <a href="https://a2a-protocol.org/latest/">a2a-protocol.org</a> — agent↔agent interop (horizontal). <a href="#fnref-8">↩</a></li>
+<li id="ref-9">OpenAI. <em>Function calling and other API updates</em>. 2023-06-13. <a href="https://openai.com/index/function-calling-and-other-api-updates/">openai.com</a> — structured JSON-Schema tool calling. <a href="#fnref-9">↩</a></li>
+<li id="ref-10">Liu et al. <em>Lost in the Middle: How Language Models Use Long Contexts</em>. TACL 2024. <a href="https://arxiv.org/abs/2307.03172">arXiv:2307.03172</a> — mid-context info is ignored. <a href="#fnref-10">↩</a></li>
+<li id="ref-11">Greshake et al. <em>Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection</em>. 2023. <a href="https://arxiv.org/abs/2302.12173">arXiv:2302.12173</a> — indirect prompt injection. <a href="#fnref-11">↩</a></li>
+<li id="ref-12">Jimenez et al. <em>SWE-bench: Can Language Models Resolve Real-World GitHub Issues?</em> ICLR 2024. <a href="https://arxiv.org/abs/2310.06770">arXiv:2310.06770</a> — real code-fix benchmark. <a href="#fnref-12">↩</a></li>
+<li id="ref-13">OpenAI. <em>Introducing SWE-bench Verified</em>. 2024-08. <a href="https://openai.com/index/introducing-swe-bench-verified/">openai.com</a> — 500-problem human-validated subset. <a href="#fnref-13">↩</a></li>
+<li id="ref-14">Mialon et al. <em>GAIA: a benchmark for General AI Assistants</em>. ICLR 2024. <a href="https://arxiv.org/abs/2311.12983">arXiv:2311.12983</a> — general-assistant eval (human 92%). <a href="#fnref-14">↩</a></li>
+<li id="ref-15">Xie et al. <em>OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments</em>. NeurIPS 2024. <a href="https://arxiv.org/abs/2404.07972">arXiv:2404.07972</a> — computer-use eval (human 72.36%). <a href="#fnref-15">↩</a></li>
+<li id="ref-16">Zhou et al. <em>WebArena: A Realistic Web Environment for Building Autonomous Agents</em>. ICLR 2024. <a href="https://arxiv.org/abs/2307.13854">arXiv:2307.13854</a> — web-agent eval (human 78.24%). <a href="#fnref-16">↩</a></li>
+<li id="ref-17">Liu et al. <em>AgentBench: Evaluating LLMs as Agents</em>. ICLR 2024. <a href="https://arxiv.org/abs/2308.03688">arXiv:2308.03688</a> — 8-environment eval. <a href="#fnref-17">↩</a></li>
+<li id="ref-18">Yao et al. <em>τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains</em>. 2024. <a href="https://arxiv.org/abs/2406.12045">arXiv:2406.12045</a> — multi-turn tool-user + pass^k. <a href="#fnref-18">↩</a></li>
+<li id="ref-19">Chan et al. <em>MLE-bench: Evaluating Machine Learning Agents on Machine Learning Engineering</em>. ICLR 2025. <a href="https://arxiv.org/abs/2410.07095">arXiv:2410.07095</a> — Kaggle ML-engineering eval. <a href="#fnref-19">↩</a></li>
+</ol>

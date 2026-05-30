@@ -10,23 +10,28 @@
 | # | 主题 / Track | Cheatsheet 题解 | 手撕 / Drill | 状态 |
 |---|---|---|---|---|
 | 0 | 前置 / Prereq | 见姊妹仓库 [post-training-playbook](https://ac.fzhiy.net/post-training-playbook/) | PPO · GRPO · RLVR · RM · PEFT | — |
-| 1 | Agentic & Long-horizon RL | [题解](cheatsheet-agentic-and-long-horizon-rl.html) | [turn-credit-assignment](drill-turn-credit-assignment.html) | ✅ |
-| 2 | Continual & Lifelong Learning | [题解](cheatsheet-continual-and-lifelong-learning.html) | [ewc-replay](drill-ewc-replay.html) | ✅ |
-| 3 | Self-improving LLMs | [题解](cheatsheet-self-improving-llms.html) | [self-refine-loop](drill-self-refine-loop.html) | ✅ |
-| 🚧 | 规划中 / Planned | agent-foundations · agent-evaluation · agentic-rl-infra · agent-safety | react-tool-call-loop | 规划 |
+| 1 | Agent Foundations | [题解](cheatsheet-agent-foundations.html) | [react-tool-call-loop](drill-react-tool-call-loop.html) | ✅ |
+| 2 | Agentic & Long-horizon RL | [题解](cheatsheet-agentic-and-long-horizon-rl.html) | [turn-credit-assignment](drill-turn-credit-assignment.html) | ✅ |
+| 3 | Continual & Lifelong Learning | [题解](cheatsheet-continual-and-lifelong-learning.html) | [ewc-replay](drill-ewc-replay.html) | ✅ |
+| 4 | Self-improving LLMs | [题解](cheatsheet-self-improving-llms.html) | [self-refine-loop](drill-self-refine-loop.html) | ✅ |
+| 🚧 | 规划中 / Planned | agent-evaluation · agentic-rl-infra · agent-safety | — | 规划 |
 
 ## 0 · 前置 / Prereq
 - 后训练主线(见姊妹仓库):PPO / GRPO / RLVR、reward modeling、PEFT。
 
-## 1 · Agentic & Long-horizon RL
+## 1 · Agent Foundations
+- [agent-foundations](cheatsheet-agent-foundations.html) — agent 心智模型、ReAct、规划(Plan-Execute)、工具使用(Toolformer / function calling)、协议层(MCP/A2A)、生产工程模式、评测与失败模式。
+- 手撕:[react-tool-call-loop](drill-react-tool-call-loop.html) — ReAct 循环(parse→route→observe→loop)+ SFT label masking。
+
+## 2 · Agentic & Long-horizon RL
 - [agentic-and-long-horizon-rl](cheatsheet-agentic-and-long-horizon-rl.html) — 多轮 / 工具使用 RL、长程信用分配(turn vs trajectory)、RLVR→agentic、PRM/ORM、观测 token 掩码。
 - 手撕:[turn-credit-assignment](drill-turn-credit-assignment.html) — 组相对优势 + 掩码 PG。
 
-## 2 · Continual & Lifelong Learning
+## 3 · Continual & Lifelong Learning
 - [continual-and-lifelong-learning](cheatsheet-continual-and-lifelong-learning.html) — 灾难性遗忘、正则(EWC/SI/MAS)/ replay(GEM/A-GEM/DER)/ 参数隔离、AA/BWT/FWT、continual alignment / alignment tax。
 - 手撕:[ewc-replay](drill-ewc-replay.html) — Fisher + EWC 惩罚 + replay,验证抗遗忘。
 
-## 3 · Self-improving LLMs
+## 4 · Self-improving LLMs
 - [self-improving-llms](cheatsheet-self-improving-llms.html) — STaR / ReST / RFT、self-rewarding、self-play(SPIN)、RLAIF、反思(Reflexion/Self-Refine);自改进闭环与崩溃模式。
 - 手撕:[self-refine-loop](drill-self-refine-loop.html) — 生成→批评→修订迭代,验证分数单调。
 

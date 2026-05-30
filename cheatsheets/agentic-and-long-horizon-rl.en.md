@@ -81,7 +81,34 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 > The rollout phase requires **actually executing tools/environment within the loop** (often asynchronously), leading to longer trajectories → more expensive sampling → a major system bottleneck for agentic RL.
 
-## 6. Bridge from single-turn
+## 6. Training pipeline: SFT warm-start → RL
+
+Agent training is almost always two-stage: **SFT warm-start → RL fine-tune**. Under an open action space + sparse terminal reward, RL from a pretrained model barely explores any successful trajectory (success rate decays exponentially with steps, the group is often all-zero → vanishing gradient), and it doesn't even know the basic tool-call format. First SFT on expert / successful trajectories to learn the format and trajectory structure and raise the success rate to where RL produces a useful gradient, then RL to surpass the demonstrations.
+
+- **AgentTuning** (arXiv:2310.12823): builds the AgentInstruct multi-task trajectories for **hybrid SFT**, improving agent ability without hurting general ability.
+- **Agent-FLAN** (arXiv:2403.12881): **separates** "format following" from "agent reasoning" in the data and adds **negative samples** (teaching the model to decline wrong tool calls / suppress agent hallucination) — an improvement at the SFT-data-design level.
+- **ReFT** (arXiv:2401.08967): SFT warm-start (CoT) → **online PPO** fine-tuning over self-sampled reasoning paths, improving generalization (no extra questions needed).
+- **ReSearch** (arXiv:2503.19470): **pure RL** to learn to interleave search calls with CoT, with no supervised reasoning-step labels — putting tool use directly into RL.
+
+## 7. Representative recipes
+
+| Recipe | Setting | Key point |
+|---|---|---|
+| **ToolRL** (2504.13958) | tool calling | **fine-grained reward shaping** for tool learning (format + result + redundancy) |
+| **RAGEN / StarPO** (2504.20073) | multi-turn | **trajectory-level RL**; identifies the **Echo Trap** collapse → StarPO-S stabilization |
+| **WebRL** (2411.02337) | web agent | **self-evolving online curriculum** (generate new tasks from failed / difficulty-frontier tasks) + ORM; WebArena-Lite Llama-3.1-8B 4.8%→42.4% |
+| **SWE-RL** (2502.18449, Meta) | code fix | **rule-based reward** RL on open software-evolution data; SWE-bench Verified 41.0% (Llama3-70B) |
+
+**2025 RL improvements (algorithm variants + systems)**:
+
+- **DAPO** (2503.14476, ByteDance): **clip-higher** (raise the positive clip upper bound to prevent entropy collapse) + overlong reward shaping + dynamic sampling + token-level PG loss.
+- **CISPO** (MiniMax-M1, 2506.13585): **clips the IS weight (per-token) instead of zeroing low-probability tokens**, retaining the gradient contribution of all tokens (including rare "reflective" tokens).
+- **VAPO** (2504.05118): value-augmented PPO, addressing value bias + heterogeneous sequence lengths.
+- **AReaL** (2505.24298) **(systems-level, not an algorithm variant)**: a **fully asynchronous RL system** that decouples generation from training (cf. §5 rollouts are expensive).
+
+> ⚠️ Numbers in the table / list are **as reported in the original papers** (model / config per the original); benchmarks move fast and are contamination-prone, so public-reproduction conclusions may differ.
+
+## 8. Bridge from single-turn
 
 The **GRPO / RLVR / loss masking** from the sibling repository are the building blocks; Agentic RL ≈ **applying them to trajectories** + solving "credit assignment for sparse terminal rewards". If you understand single-turn, grasping the three points of "trajectory formulation + masking + group relative baseline" enables the transition.
 
@@ -189,9 +216,25 @@ Answer: PPO clipping only truncates the IS ratio to control variance—it does *
 
 </details>
 
+<details class="qa"><summary>13. Why does agent RL almost always need an SFT warm-start? What happens if you RL straight from the pretrained model?</summary>
+
+Answer: Under an open action space + sparse terminal reward, RL straight from the pretrained model barely explores any successful trajectory (success rate decays exponentially with steps, the group is often all-zero → vanishing gradient), and it doesn't know the basic tool-call format. First SFT on expert / successful trajectories to learn the format and trajectory structure and raise the success rate to where RL produces a useful gradient, then RL to surpass the demonstrations. AgentTuning / Agent-FLAN are representative on the SFT-data side; ReFT is representative of the two-stage "SFT → online PPO".
+
+**Follow-up:** What problem does an over-done SFT warm-start cause? → Excessive SFT pins the policy to the demonstration distribution, narrowing the RL exploration space and converging prematurely to "imitation" rather than "surpassing"; the format / style bias of the SFT data is also inherited and amplified by RL — warm up only until it "reliably produces usable trajectories", do not treat SFT as the main training.
+
+</details>
+
+<details class="qa"><summary>14. What is the Echo Trap reported by RAGEN? How does it differ from single-turn GRPO's all-zero-group degeneration?</summary>
+
+Answer: The Echo Trap (RAGEN/StarPO) is a training collapse in multi-turn agent RL: the model gradually repeats the same "previously-worked" phrasing / action template across different states (self-echo), reasoning diversity and entropy drop, reward variance collapses, and reward looks flat while learning has actually stopped. StarPO-S mitigates it with variance/entropy-based trajectory filtering (discard low-diversity rollouts) + stronger KL/clip control to preserve exploration.
+
+**Follow-up:** How do their root causes and fixes differ? → The all-zero group is "no positive signal" → vanishing gradient (**insufficient** exploration), fixed by a difficulty curriculum / verifiable milestones to supply positives; the Echo Trap is "positive signal but collapsed to a single mode" → loss of diversity (exploration **collapse**), fixed by diversity / entropy filtering + entropy regularization. The former lacks positives; the latter has homogenized positives.
+
+</details>
+
 ### L3 Deep Dive
 
-<details class="qa"><summary>13. When the terminal reward is a single 0/1, how can credit be reasonably distributed across dozens of turns? Provide at least two approaches and compare them.</summary>
+<details class="qa"><summary>15. When the terminal reward is a single 0/1, how can credit be reasonably distributed across dozens of turns? Provide at least two approaches and compare them.</summary>
 
 Answer: ① **GRPO Group Relative Baseline**: Multiple trajectories for the same task share the terminal return for normalized baseline, simple and critic-free, but credit is still uniformly distributed within the trajectory. ② **Turn-level GAE**: Introduce a lightweight turn-level value head, use $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ to decompose the terminal return into per-turn TD errors, providing more precise credit but requiring critic bootstrapping. ③ **PRM Step Reward**: Use Monte Carlo rollouts to estimate the change in future success probability for each step as step-level reward, providing the finest credit but at the highest sampling cost. A compromise: First train basic capabilities with GRPO, then add a turn-level value head after stabilization.
 
@@ -199,7 +242,7 @@ Answer: ① **GRPO Group Relative Baseline**: Multiple trajectories for the same
 
 </details>
 
-<details class="qa"><summary>14. How to combine "verifiable outcome reward" with "process supervision" to be stable yet not gameable?</summary>
+<details class="qa"><summary>16. How to combine "verifiable outcome reward" with "process supervision" to be stable yet not gameable?</summary>
 
 Answer: Use verifiable terminal signals (unit test pass / environment state) as the primary reward—hard to hack. Use **verifiable milestones** as intermediate step rewards (e.g., passing unit tests for sub-functions, not neural network scoring) to alleviate sparsity without introducing a gameable proxy. Simultaneously add a KL penalty $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ to prevent overoptimization, and apply step penalties to suppress looping.
 
@@ -207,7 +250,7 @@ Answer: Use verifiable terminal signals (unit test pass / environment state) as 
 
 </details>
 
-<details class="qa"><summary>15. Why are rollouts for agentic RL expensive? What engineering mitigations exist (asynchronous execution, truncation, length penalties)? What are their respective costs?</summary>
+<details class="qa"><summary>17. Why are rollouts for agentic RL expensive? What engineering mitigations exist (asynchronous execution, truncation, length penalties)? What are their respective costs?</summary>
 
 Answer: Rollouts require actually executing tools/environment within the loop (networking, code execution, etc.), which can have second-level latency. Longer trajectories also lead to large KV cache usage. Mitigations: ① **Asynchronous execution**—run multiple episodes in parallel so the GPU doesn't idle; the cost is that when a rollout completes, the policy may have already taken several steps (staleness), requiring IS correction or ESS monitoring. ② **Trajectory truncation**—forcibly terminate if the maximum step count is exceeded; the cost is that truncated trajectories have incomplete returns, requiring bootstrapping or direct discarding. ③ **Length penalty** $R'=R-\alpha|\tau|$—incentivizes the agent to complete efficiently; the cost is potentially penalizing necessary long reasoning chains.
 
@@ -215,7 +258,7 @@ Answer: Rollouts require actually executing tools/environment within the loop (n
 
 </details>
 
-<details class="qa"><summary>16. How does compounding error amplify in long trajectories? What is its relationship with exposure bias?</summary>
+<details class="qa"><summary>18. How does compounding error amplify in long trajectories? What is its relationship with exposure bias?</summary>
 
 Answer: Small errors at each turn's decision change subsequent observations, causing the trajectory to deviate from the training distribution. The next turn then makes an even larger error on this out-of-distribution state, leading to errors **amplifying exponentially** with turns. This is structurally identical to exposure bias in SFT—during training, the model sees ground-truth prefixes, but during inference, it sees prefixes generated by itself. Long-horizon agents are particularly severe because tool returns also depend on previous actions. Mitigation: RL itself alleviates exposure bias by training the model on its own rollouts. Curriculum learning (starting with short horizons) can reduce the initial speed of error accumulation. **DAgger (Dataset Aggregation)** requests expert labels for states generated by the current policy at each turn, continuously incorporating the distribution actually visited by the policy into training, directly combating distribution shift at the data level. However, even with online RL, distribution shift within long trajectories cannot be entirely eliminated theoretically: within each rollout, small errors in early steps **compound with interest** within the trajectory—subsequent steps make decisions on states that increasingly deviate from the training distribution. RL updates, while correcting against the seen rollouts, cannot "foresee" the subsequent snowball effect caused by early errors within the same batch of rollouts. This is the fundamental reason why long-horizon scenarios are more fragile to error accumulation than short-horizon ones.
 
