@@ -171,6 +171,20 @@ $$\text{FWT} = \frac{1}{T-1} \sum_{j=2}^{T} \bigl(a_{j-1,j} - b_j\bigr)$$
 | 个性化 / 持续用户反馈 | 适应新用户偏好同时保住通用能力 |
 | 知识更新(时效信息) | 注入新事实同时不干扰旧知识结构 |
 
+### 5.5 知识编辑 / Knowledge Editing(ROME / MEMIT)
+
+**定位**:CL 正则化(EWC 等)是**全局保护**——惩罚所有对旧任务重要的权重;知识编辑(model editing)是**定向手术**——只改写存储某条事实的少数参数,精准更新单条知识而不重训。两者互补:CL 防"学新忘旧",编辑做"精准改旧"。
+
+**ROME(Rank-One Model Editing)**<span class="cite-wrap"><a class="cite" id="fnref-10" href="#ref-10">10</a><span class="cite-note">因果追踪定位事实知识主要在中间层 MLP;把该层 MLP 的第二个线性投影(down-projection)当线性 associative memory,用 rank-1 更新改写特定 key-value 关联。<a href="https://arxiv.org/abs/2202.05262">Meng 2022 ↗</a></span></span>:因果追踪(causal tracing)发现事实型知识主要存在**中间层 MLP** 的 key→value 关联里。把该层权重 $W$ 视作线性 associative memory(键 $k$ 映射到值 $v$),插入一条新事实 $(k_*, v_*)$ 等价于一个**最小改动**的约束最小二乘:
+
+$$\hat{W} = \arg\min_{\hat W}\ \lVert \hat W K - V \rVert^2 \quad \text{s.t.}\ \hat W k_* = v_*,$$
+
+其闭式解是对 $W$ 的一个 **rank-1 更新**——既保住已有关联 $K\!\to\!V$,又让目标主语的键映射到新宾语。
+
+**MEMIT(Mass-Editing Memory in a Transformer)**<span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">把 ROME 的单条编辑扩展到跨多个中间层、成批数千条事实的批量更新。<a href="https://arxiv.org/abs/2210.07229">Meng 2022 ↗</a></span></span>:把 ROME 的单条编辑扩展到**成批数千条事实**,跨多个中间层分摊更新,解决 ROME 顺序逐条编辑大量事实时的退化。
+
+**顺序编辑的遗忘**:连续编辑多条事实时,后续编辑会干扰先前编辑(edit interference),并可能波及无关知识与通用能力——这正是 CL 的灾难性遗忘在"编辑"范式下的再现。因此编辑质量要同时看三轴:**reliability**(目标事实改对)、**generalization**(对释义/同义改写同样生效)、**locality / specificity**(无关知识不被波及)。三者间存在权衡,与 stability-plasticity 同构。
+
 ## 6. 从零实现:EWC 二次惩罚 / From-scratch EWC
 
 ```python
@@ -610,4 +624,6 @@ $$A_k V_{\text{prev}} \approx 0, \quad V_{\text{prev}} = \text{span}\bigl(\{A_j\
 <li id="ref-7">Schwarz et al. <em>Progress &amp; Compress: A scalable framework for continual learning</em>. ICML 2018. <a href="https://arxiv.org/abs/1805.06370">arXiv:1805.06370</a> — 双网络 active column + knowledge base;online EWC 用 Fisher EMA 跨任务累积,内存恒定. <a href="#fnref-7">↩</a></li>
 <li id="ref-8">De Lange, van de Ven, and Tuytelaars. <em>Continual evaluation for lifelong learning: Identifying the stability gap</em>. ICLR 2023. <a href="https://arxiv.org/abs/2205.13452">arXiv:2205.13452</a> — per-iteration 连续评估框架;发现任务切换后性能骤降后恢复的 stability gap 现象. <a href="#fnref-8">↩</a></li>
 <li id="ref-9">van de Ven and Tolias. <em>Three scenarios for continual learning</em>. 2019. <a href="https://arxiv.org/abs/1904.07734">arXiv:1904.07734</a> — 系统定义 Task-IL / Domain-IL / Class-IL 三场景;揭示正则化方法在 Class-IL 上近乎完全失效. <a href="#fnref-9">↩</a></li>
+<li id="ref-10">Meng et al. <em>Locating and Editing Factual Associations in GPT</em>. NeurIPS 2022. <a href="https://arxiv.org/abs/2202.05262">arXiv:2202.05262</a> — ROME:因果定位 + rank-1 编辑中间层 MLP 的事实关联. <a href="#fnref-10">↩</a></li>
+<li id="ref-11">Meng et al. <em>Mass-Editing Memory in a Transformer</em>. ICLR 2023. <a href="https://arxiv.org/abs/2210.07229">arXiv:2210.07229</a> — MEMIT:跨多层批量编辑数千条事实. <a href="#fnref-11">↩</a></li>
 </ol>

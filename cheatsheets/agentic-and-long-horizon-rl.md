@@ -157,9 +157,41 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
+<details class="qa"><summary>9. 多个 agent 协作只有团队级终端 reward 时,joint credit 与 marginal credit 的区别?</summary>
+
+答:多个 LLM agent 协作完成一个任务、只有团队级终端 reward 时,要回答"这个共享奖励该如何分到每个 agent"。**joint credit**:所有 agent 共享同一个团队 advantage(类比 trajectory-level),最简单但鼓励搭便车——贡献小的 agent 也被同等奖励;**marginal credit**:用反事实(counterfactual)——去掉或用默认策略替换某 agent 后团队回报的变化量,近似该 agent 的边际贡献,信用更准但需额外 rollout 估计反事实基线。MAPoRL(arXiv:2502.18439)这类多智能体 post-co-training 用 MARL + verifier 奖励引导多 LLM 协同,显式训练协作行为。
+
+**追问：** 反事实信用分配在 LLM 多 agent 场景为什么比传统 MARL 更贵? → 估计某 agent 的反事实基线要在"该 agent 缺席 / 被默认策略替换"条件下重跑团队 rollout,每个 agent、每条轨迹都要一次额外的多 agent 生成,成本随 agent 数线性甚至更高;而每次生成本身是一次完整 LLM 解码,远贵于传统 MARL 的小网络前向——所以实务常退化为 joint credit + 角色级 reward shaping 的折中。
+
+</details>
+
+<details class="qa"><summary>10. 长程 agent 的上下文窗口管理:KV 驱逐与摘要各自对训练 / 推理有什么影响?</summary>
+
+答:轨迹越长,状态 $s_t$(全历史拼接)线性增长,attention 是 $O(L^2)$、KV cache 显存 $O(L)$——长程 agent 的核心系统瓶颈。两类缓解:**KV 驱逐 / 压缩**(丢弃或合并低注意力权重的旧 token KV,如保留 attention sink + 近窗)省显存但**有损**,被丢的观测无法再被 attend,可能丢早期关键信息;**摘要 / 记忆外置**(把旧轮压成摘要文本或写入外部记忆再检索)保留语义但引入摘要误差与额外调用。训练带上下文管理的 agent 时,被压缩 / 摘要替换的 span 仍按"环境注入"处理(掩码,不回传梯度)。
+
+**追问：** 上下文压缩如何与信用分配相互作用、带来训练-推理不一致? → 若训练时看到完整历史、推理时因预算触发压缩,则 agent 在"压缩后状态分布"上从未被训练,出现分布偏移(类似 exposure bias);更隐蔽的是被压缩掉的那一轮若正是关键决策点,其 token 的信用在训练时仍计入、推理时却信息缺失——需在训练中也按推理预算模拟压缩,保持两端状态构造一致。
+
+</details>
+
+<details class="qa"><summary>11. 工具调用既能 SFT 又能 RL,两者在"训练哪些 token、用什么信号"上的核心差别?</summary>
+
+答:**SFT** 在专家 / 成功轨迹上做 next-token,label 掩掉问题与工具返回 token,只在 agent 生成的 think/act token 上回传交叉熵——学的是"模仿这条轨迹的动作分布";**RL**(GRPO/PPO)在 agent **自己 rollout** 的轨迹上,用 reward 算 advantage,同样只在 agent token 上回传策略梯度——学的是"哪些动作带来更高回报"。两者掩掉的 token 集合相同(都掩工具返回),区别在损失信号:SFT = 固定目标 token 的 log-likelihood,RL = advantage 加权的 log-prob。常见配方:SFT 热启(模仿)→ RL 精调(超越演示)。
+
+**追问：** function-calling 的结构化 JSON 输出做 SFT 时,label masking 有什么 text-based 格式没有的坑? → JSON 串里固定模板部分(`{"name":`、`"arguments":`、标点)是 schema 而非决策;若全部当 agent token 训练,梯度会浪费在背诵固定格式上、放大对 schema 微小变化的脆弱性。一种更精细的做法是只对"填空"的 value(工具名、参数值)计 loss,模板 token 也部分掩掉——text-based 的 `Action:` 行没有这层固定模板,坑更小但自由文本解析更脆。
+
+</details>
+
+<details class="qa"><summary>12. PPO clip 之外,异步 / off-policy 长程 RL 还有哪些纠偏手段?</summary>
+
+答:PPO clip 只截断 IS ratio 控方差、**不纠偏**。其它思路:① **全局 advantage 归一化 + 轻量稳定化**(REINFORCE++,arXiv:2501.03262):去 critic,用 batch 级 advantage 归一化 + PPO 式 clip/KL 稳定,缓解 GRPO 组内全零退化的脆弱性;② **V-trace 双截断 IS**(出自 IMPALA,Espeholt et al. 2018):对每步 ratio 设 $\bar\rho,\bar c$ 双截断,得到有偏但低方差、在 policy lag 下仍有收敛保证的 target;③ **前缀 IS / 序列级截断**:理论正确的修正是前缀乘积 ratio,实务用上界截断近似。共性权衡:截断越狠 → 方差越低、偏差越大,必须配合**小 policy lag**(限制异步步数)或 ESS 监控才真正控住分布偏移。
+
+**追问：** 为什么"全局(batch 级)advantage 归一化"在长程稀疏 reward 下常比 GRPO 的"组内归一化"更稳? → GRPO 在同 prompt 的小 group 内归一化,稀疏成功率下整组常全零 → $\sigma_g=0$ → advantage 退化;batch 级归一化把不同 prompt 的回报放进同一池子估计均值 / 方差,即使某个 prompt 全失败,只要 batch 里别处有正信号 advantage 就不为零——代价是不同 prompt 的回报被同一基线归一,advantage 不再反映"相对该 prompt 自身难度"的好坏:难题上的成功与易题上的成功拿到相近 advantage,削弱了 per-prompt 的信用精度。
+
+</details>
+
 ### L3 深挖
 
-<details class="qa"><summary>9. 终端只有一个 0/1 reward 时,如何把信用合理分到几十轮?给出至少两种思路并比较。</summary>
+<details class="qa"><summary>13. 终端只有一个 0/1 reward 时,如何把信用合理分到几十轮?给出至少两种思路并比较。</summary>
 
 答:①**GRPO 组相对 baseline**:同任务多条轨迹共享终端 return 作归一化 baseline,简单无需 critic,但信用在轨迹内仍均摊;②**turn-level GAE**:引入轻量 turn-level value 头,用 $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ 把终端 return 分解为逐轮 TD 误差,信用更精准但需 critic bootstrap;③**PRM step reward**:用蒙特卡洛 rollout 估计每步未来成功率变化作步级 reward,信用最细但采样成本最高。三者折中:先 GRPO 训练基础能力,稳定后加 turn-level value 头。
 
@@ -167,7 +199,7 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
-<details class="qa"><summary>10. 如何把"可验证结果奖励"与"过程监督"结合,既稳又不被刷?</summary>
+<details class="qa"><summary>14. 如何把"可验证结果奖励"与"过程监督"结合,既稳又不被刷?</summary>
 
 答:以终端可验证信号(unit test pass / 环境状态)为主奖励——难 hack;用**可验证里程碑**作中间 step reward(子函数单元测试通过而非神经网络打分),缓解稀疏性而不引入可被 gaming 的 proxy。同时加 KL 惩罚 $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ 防 overoptimization,以及步数惩罚压制 looping。
 
@@ -175,7 +207,7 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
-<details class="qa"><summary>11. agentic RL 的 rollout 为什么贵?有哪些工程缓解(异步执行、截断、长度惩罚)?各自代价?</summary>
+<details class="qa"><summary>15. agentic RL 的 rollout 为什么贵?有哪些工程缓解(异步执行、截断、长度惩罚)?各自代价?</summary>
 
 答:rollout 需在循环里真实执行工具/环境(网络、代码执行等),延迟可达秒级,且轨迹更长导致 KV cache 占用大。缓解:①**异步执行**——并行跑多个 episode,GPU 不空等;代价是 rollout 完成时 policy 已经走了若干步(staleness),需要 IS 修正或 ESS 监控。②**轨迹截断**——超过最大步数强行终止;代价是截断轨迹的 return 不完整,需 bootstrap 补齐或直接丢弃。③**长度惩罚** $R'=R-\alpha|\tau|$——激励 agent 高效完成;代价是可能惩罚必要的长推理链。
 
@@ -183,7 +215,7 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 </details>
 
-<details class="qa"><summary>12. 误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?</summary>
+<details class="qa"><summary>16. 误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?</summary>
 
 答:每轮决策的小误差会改变后续观测,导致轨迹偏离训练分布,下一轮又在分布外状态上犯更大误差,误差随轮次**指数级放大**。这与 SFT 的 exposure bias 同构——训练时见到的是 ground-truth 前缀,推理时见到的是模型自己生成的前缀;长程 agent 尤为严重因为工具返回也依赖于之前行动。缓解:RL 本身通过让模型在自身 rollout 上训练来缓解 exposure bias;课程学习(从短 horizon 开始)可以降低初期误差累积速度;**DAgger(数据聚合)**在每轮用当前策略生成的状态请求专家标注,持续把策略实际访问的分布纳入训练,从数据层面直接对抗 distribution shift。然而即使用 online RL,理论上仍不能完全消除长轨迹内的 distribution shift:每条 rollout 内部,早期步的微小误差会在轨迹内**复利累积**——后续步在越来越偏离训练分布的状态上决策,RL 更新虽然针对已见过的 rollout 做修正,但无法"预见"同一批 rollout 内早期误差引发的后续雪球效应,这正是长程比短程对误差累积更脆弱的根本原因。
 

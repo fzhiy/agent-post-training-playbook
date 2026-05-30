@@ -171,6 +171,20 @@ Sequentially introducing new instruction types (e.g., coding → then math → t
 | Personalization / continuous user feedback | Adapt to new user preferences while preserving general capabilities |
 | Knowledge update (time-sensitive information) | Inject new facts without disturbing old knowledge structure |
 
+### 5.5 Knowledge Editing (ROME / MEMIT)
+
+**Positioning**: CL regularization (EWC etc.) is **global protection**—penalizing all weights important to old tasks; knowledge editing (model editing) is **targeted surgery**—rewriting only the few parameters that store a single fact, updating one piece of knowledge precisely without retraining. The two are complementary: CL prevents "learning new, forgetting old," while editing performs "precise revision of the old."
+
+**ROME (Rank-One Model Editing)**<span class="cite-wrap"><a class="cite" id="fnref-10" href="#ref-10">10</a><span class="cite-note">Causal tracing locates factual knowledge mainly in middle-layer MLPs; treats that MLP's second linear projection (down-projection) as a linear associative memory and rewrites a specific key-value association with a rank-1 update. <a href="https://arxiv.org/abs/2202.05262">Meng 2022 ↗</a></span></span>: causal tracing finds that factual knowledge resides mainly in **middle-layer MLP** key→value associations. Viewing that layer's weight $W$ as a linear associative memory (key $k$ maps to value $v$), inserting a new fact $(k_*, v_*)$ is equivalent to a **minimal-change** constrained least squares:
+
+$$\hat{W} = \arg\min_{\hat W}\ \lVert \hat W K - V \rVert^2 \quad \text{s.t.}\ \hat W k_* = v_*,$$
+
+whose closed-form solution is a **rank-1 update** to $W$—preserving existing associations $K\!\to\!V$ while mapping the target subject's key to the new object.
+
+**MEMIT (Mass-Editing Memory in a Transformer)**<span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">Extends ROME's single edit to batches of thousands of facts updated across multiple middle layers. <a href="https://arxiv.org/abs/2210.07229">Meng 2022 ↗</a></span></span>: extends ROME's single edit to **batches of thousands of facts**, amortizing the update across multiple middle layers, resolving the degradation ROME suffers when editing many facts sequentially one by one.
+
+**Forgetting under sequential edits**: when editing many facts in sequence, later edits interfere with earlier ones (edit interference) and may spill over to unrelated knowledge and general capabilities—exactly catastrophic forgetting reappearing in the "editing" paradigm. Edit quality is therefore measured on three axes simultaneously: **reliability** (the target fact is corrected), **generalization** (paraphrases / synonymous rewordings also take effect), and **locality / specificity** (unrelated knowledge is untouched). These three trade off against one another, isomorphic to stability-plasticity.
+
 ## 6. From-scratch EWC
 
 ```python
@@ -612,4 +626,6 @@ In the sequential alignment pipeline (SFT → DPO → RL), freezing the backbone
 <li id="ref-7">Schwarz et al. <em>Progress &amp; Compress: A scalable framework for continual learning</em>. ICML 2018. <a href="https://arxiv.org/abs/1805.06370">arXiv:1805.06370</a> — Dual-network active column + knowledge base; online EWC accumulates Fisher across tasks via EMA, constant memory. <a href="#fnref-7">↩</a></li>
 <li id="ref-8">De Lange, van de Ven, and Tuytelaars. <em>Continual evaluation for lifelong learning: Identifying the stability gap</em>. ICLR 2023. <a href="https://arxiv.org/abs/2205.13452">arXiv:2205.13452</a> — Per-iteration continuous evaluation framework; discovers the stability gap phenomenon of sharp performance drop then recovery after task switch. <a href="#fnref-8">↩</a></li>
 <li id="ref-9">van de Ven and Tolias. <em>Three scenarios for continual learning</em>. 2019. <a href="https://arxiv.org/abs/1904.07734">arXiv:1904.07734</a> — Systematically defines the three scenarios Task-IL / Domain-IL / Class-IL; shows that regularization methods almost completely fail on Class-IL. <a href="#fnref-9">↩</a></li>
+<li id="ref-10">Meng et al. <em>Locating and Editing Factual Associations in GPT</em>. NeurIPS 2022. <a href="https://arxiv.org/abs/2202.05262">arXiv:2202.05262</a> — ROME: causal localization + rank-1 editing of factual associations in middle-layer MLPs. <a href="#fnref-10">↩</a></li>
+<li id="ref-11">Meng et al. <em>Mass-Editing Memory in a Transformer</em>. ICLR 2023. <a href="https://arxiv.org/abs/2210.07229">arXiv:2210.07229</a> — MEMIT: batch-editing thousands of facts across multiple layers. <a href="#fnref-11">↩</a></li>
 </ol>

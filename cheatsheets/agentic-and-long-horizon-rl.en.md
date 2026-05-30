@@ -157,9 +157,41 @@ Answer: Three typical forms: ① Idling/Looping (repeatedly calling cheap tools 
 
 </details>
 
+<details class="qa"><summary>9. When several agents collaborate with only a team-level terminal reward, what is the difference between joint credit and marginal credit?</summary>
+
+Answer: When multiple LLM agents collaborate on one task and only a team-level terminal reward exists, the question is "how should this shared reward be distributed to each agent." **Joint credit**: all agents share the same team advantage (analogous to trajectory-level)—simplest, but encourages free-riding, as low-contribution agents are rewarded equally. **Marginal credit**: use a counterfactual—the change in team return after removing or replacing an agent with a default policy—to approximate that agent's marginal contribution; credit is more accurate but requires extra rollouts to estimate the counterfactual baseline. Multi-agent post-co-training like MAPoRL (arXiv:2502.18439) uses MARL + a verifier reward to explicitly train collaborative behavior across multiple LLMs.
+
+**Follow-up:** Why is counterfactual credit assignment more expensive in the LLM multi-agent setting than in classic MARL? → Estimating an agent's counterfactual baseline requires re-running the team rollout under the condition "this agent is absent / replaced by a default policy"; every agent and every trajectory needs an extra multi-agent generation, scaling at least linearly with the number of agents. And each generation is a full LLM decode—far more expensive than the small-network forward pass of classic MARL—so practice often falls back to a joint-credit + role-level reward-shaping compromise.
+
+</details>
+
+<details class="qa"><summary>10. Context-window management for long-horizon agents: how do KV eviction and summarization each affect training / inference?</summary>
+
+Answer: The longer the trajectory, the more the state $s_t$ (full concatenated history) grows linearly; attention is $O(L^2)$ and KV cache memory is $O(L)$—the core system bottleneck for long-horizon agents. Two classes of mitigation: **KV eviction / compression** (drop or merge the KV of old low-attention-weight tokens, e.g. keep an attention sink + recent window) saves memory but is **lossy**—evicted observations can no longer be attended to, possibly losing key early information; **summarization / external memory** (compress old turns into summary text, or write to external memory and retrieve) preserves semantics but introduces summarization error and extra calls. When training an agent with context management, the spans replaced by compression / summary are still treated as "environment-injected" (masked, no gradient).
+
+**Follow-up:** How does context compression interact with credit assignment and create a train–inference mismatch? → If training sees the full history but inference triggers compression under a budget, the agent is never trained on the "post-compression state distribution," causing distribution shift (akin to exposure bias). More subtly, if the compressed-away turn is exactly a key decision point, its tokens' credit is still counted during training but the information is missing at inference—one must also simulate compression at the inference budget during training to keep both ends' state construction consistent.
+
+</details>
+
+<details class="qa"><summary>11. Tool calling can be trained by both SFT and RL—what is the core difference in "which tokens are trained and with what signal"?</summary>
+
+Answer: **SFT** does next-token prediction on expert / successful trajectories, masking the question and tool-return tokens and back-propagating cross-entropy only on the agent-generated think/act tokens—it learns to "imitate this trajectory's action distribution." **RL** (GRPO/PPO) operates on trajectories the agent **rolls out itself**, computes advantages from reward, and likewise back-propagates the policy gradient only on agent tokens—it learns "which actions yield higher return." Both mask the same token set (tool returns); the difference is the loss signal: SFT = log-likelihood of fixed target tokens, RL = advantage-weighted log-prob. A common recipe: SFT warm-start (imitate) → RL fine-tune (surpass demonstrations).
+
+**Follow-up:** When doing SFT on function-calling structured JSON output, what label-masking pitfall does it have that text-based formats don't? → The fixed template parts of the JSON string (`{"name":`, `"arguments":`, punctuation) are schema, not decisions; if all are trained as agent tokens, gradient is wasted memorizing the fixed format and amplifies fragility to minor schema changes. A more refined approach computes loss only on the "fill-in" values (tool name, argument values) and partially masks the template tokens too—text-based `Action:` lines lack this fixed template, so the pitfall is smaller but free-text parsing is more brittle.
+
+</details>
+
+<details class="qa"><summary>12. Beyond PPO clipping, what other correction methods exist for asynchronous / off-policy long-horizon RL?</summary>
+
+Answer: PPO clipping only truncates the IS ratio to control variance—it does **not** correct bias. Other approaches: ① **Global advantage normalization + lightweight stabilization** (REINFORCE++, arXiv:2501.03262): critic-free, using batch-level advantage normalization + PPO-style clip/KL stabilization, mitigating GRPO's fragility to all-zero in-group degeneration; ② **V-trace doubly-truncated IS** (introduced in IMPALA, Espeholt et al. 2018): impose double clipping $\bar\rho,\bar c$ on each step's ratio, yielding a biased but low-variance target with convergence guarantees under policy lag; ③ **Prefix IS / sequence-level truncation**: the theoretically correct correction is the prefix-product ratio, approximated in practice by upper-bound truncation. The common trade-off: the harder the truncation → the lower the variance, the larger the bias; it must be combined with a **small policy lag** (limiting asynchronous steps) or ESS monitoring to truly control distribution shift.
+
+**Follow-up:** Why is "global (batch-level) advantage normalization" often more stable than GRPO's "in-group normalization" under long-horizon sparse rewards? → GRPO normalizes within a small group for the same prompt; under sparse success rates the whole group is often all-zero → $\sigma_g=0$ → advantage degenerates. Batch-level normalization pools returns across different prompts to estimate mean / variance, so even if one prompt fails entirely, the advantage is non-zero as long as there is a positive signal elsewhere in the batch—the cost is that different prompts' returns are normalized against one shared baseline, so an advantage no longer reflects how good a response was *relative to its own prompt's difficulty*: a success on a hard prompt and a success on an easy prompt receive similar advantages, weakening per-prompt credit precision.
+
+</details>
+
 ### L3 Deep Dive
 
-<details class="qa"><summary>9. When the terminal reward is a single 0/1, how can credit be reasonably distributed across dozens of turns? Provide at least two approaches and compare them.</summary>
+<details class="qa"><summary>13. When the terminal reward is a single 0/1, how can credit be reasonably distributed across dozens of turns? Provide at least two approaches and compare them.</summary>
 
 Answer: ① **GRPO Group Relative Baseline**: Multiple trajectories for the same task share the terminal return for normalized baseline, simple and critic-free, but credit is still uniformly distributed within the trajectory. ② **Turn-level GAE**: Introduce a lightweight turn-level value head, use $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ to decompose the terminal return into per-turn TD errors, providing more precise credit but requiring critic bootstrapping. ③ **PRM Step Reward**: Use Monte Carlo rollouts to estimate the change in future success probability for each step as step-level reward, providing the finest credit but at the highest sampling cost. A compromise: First train basic capabilities with GRPO, then add a turn-level value head after stabilization.
 
@@ -167,7 +199,7 @@ Answer: ① **GRPO Group Relative Baseline**: Multiple trajectories for the same
 
 </details>
 
-<details class="qa"><summary>10. How to combine "verifiable outcome reward" with "process supervision" to be stable yet not gameable?</summary>
+<details class="qa"><summary>14. How to combine "verifiable outcome reward" with "process supervision" to be stable yet not gameable?</summary>
 
 Answer: Use verifiable terminal signals (unit test pass / environment state) as the primary reward—hard to hack. Use **verifiable milestones** as intermediate step rewards (e.g., passing unit tests for sub-functions, not neural network scoring) to alleviate sparsity without introducing a gameable proxy. Simultaneously add a KL penalty $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ to prevent overoptimization, and apply step penalties to suppress looping.
 
@@ -175,7 +207,7 @@ Answer: Use verifiable terminal signals (unit test pass / environment state) as 
 
 </details>
 
-<details class="qa"><summary>11. Why are rollouts for agentic RL expensive? What engineering mitigations exist (asynchronous execution, truncation, length penalties)? What are their respective costs?</summary>
+<details class="qa"><summary>15. Why are rollouts for agentic RL expensive? What engineering mitigations exist (asynchronous execution, truncation, length penalties)? What are their respective costs?</summary>
 
 Answer: Rollouts require actually executing tools/environment within the loop (networking, code execution, etc.), which can have second-level latency. Longer trajectories also lead to large KV cache usage. Mitigations: ① **Asynchronous execution**—run multiple episodes in parallel so the GPU doesn't idle; the cost is that when a rollout completes, the policy may have already taken several steps (staleness), requiring IS correction or ESS monitoring. ② **Trajectory truncation**—forcibly terminate if the maximum step count is exceeded; the cost is that truncated trajectories have incomplete returns, requiring bootstrapping or direct discarding. ③ **Length penalty** $R'=R-\alpha|\tau|$—incentivizes the agent to complete efficiently; the cost is potentially penalizing necessary long reasoning chains.
 
@@ -183,7 +215,7 @@ Answer: Rollouts require actually executing tools/environment within the loop (n
 
 </details>
 
-<details class="qa"><summary>12. How does compounding error amplify in long trajectories? What is its relationship with exposure bias?</summary>
+<details class="qa"><summary>16. How does compounding error amplify in long trajectories? What is its relationship with exposure bias?</summary>
 
 Answer: Small errors at each turn's decision change subsequent observations, causing the trajectory to deviate from the training distribution. The next turn then makes an even larger error on this out-of-distribution state, leading to errors **amplifying exponentially** with turns. This is structurally identical to exposure bias in SFT—during training, the model sees ground-truth prefixes, but during inference, it sees prefixes generated by itself. Long-horizon agents are particularly severe because tool returns also depend on previous actions. Mitigation: RL itself alleviates exposure bias by training the model on its own rollouts. Curriculum learning (starting with short horizons) can reduce the initial speed of error accumulation. **DAgger (Dataset Aggregation)** requests expert labels for states generated by the current policy at each turn, continuously incorporating the distribution actually visited by the policy into training, directly combating distribution shift at the data level. However, even with online RL, distribution shift within long trajectories cannot be entirely eliminated theoretically: within each rollout, small errors in early steps **compound with interest** within the trajectory—subsequent steps make decisions on states that increasingly deviate from the training distribution. RL updates, while correcting against the seen rollouts, cannot "foresee" the subsequent snowball effect caused by early errors within the same batch of rollouts. This is the fundamental reason why long-horizon scenarios are more fragile to error accumulation than short-horizon ones.
 
