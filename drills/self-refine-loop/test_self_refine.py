@@ -111,6 +111,36 @@ def test_zero_iterations_returns_initial():
 # Runner
 # ---------------------------------------------------------------------------
 
+def test_reflect_edit_analytic_convergence():
+    """Analytic allclose: 1-D quadratic with target=1, step_size=0.1.
+
+    For score = -(x - 1)^2, gradient w.r.t. x is 2*(1 - x).
+    One reflect_and_edit step: x_{n+1} = x_n + 0.1 * 2*(1 - x_n)
+                                        = x_n * (1 - 2*0.1) + 2*0.1
+    Error recurrence: ||x_{n+1} - 1|| = (1 - 2*0.1) * ||x_n - 1||
+    After n steps:    ||x_n - 1||     = ||x_0 - 1|| * (1 - 2*0.1)^n
+
+    Verified with np.allclose to guard against floating-point drift.
+    """
+    import numpy as np
+
+    target = torch.tensor([1.0])
+    scorer = QuadraticScorer(target)
+    x0 = torch.tensor([3.0])  # ||x0 - target|| = 2.0
+    step_size = 0.1
+    decay = 1.0 - 2.0 * step_size  # = 0.8
+
+    x = x0.clone()
+    for n in range(1, 16):
+        x = reflect_and_edit(x, scorer, step_size=step_size)
+        expected = (x0 - target).abs().item() * (decay ** n)
+        actual = (x - target).abs().item()
+        assert np.allclose(actual, expected, rtol=1e-5), (
+            f"step {n}: ||x_n - target|| = {actual:.8f}, "
+            f"expected {expected:.8f} (ratio {actual/expected:.8f})"
+        )
+
+
 if __name__ == "__main__":
     test_final_score_not_worse_than_initial()
     test_score_monotonically_non_decreasing_best()
@@ -119,4 +149,5 @@ if __name__ == "__main__":
     test_best_candidate_scores_match_best_score()
     test_score_history_length()
     test_zero_iterations_returns_initial()
+    test_reflect_edit_analytic_convergence()
     print("all self-refine drills passed ✓")

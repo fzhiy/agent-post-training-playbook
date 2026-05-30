@@ -95,11 +95,15 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 答:任务需要多轮 think→act→observe 循环,reward 只在终端给出(稀疏/延迟),动作空间包含工具调用。例子:①代码 agent 循环调用代码执行器调试程序;②搜索+汇总 agent 多轮查询 web API 后生成报告。
 
+**追问：** 为什么长程任务建模为 POMDP 而非 MDP,这对 value 估计有什么直接后果? → 工具返回(下一轮观测)在 act 之前未知,agent 处于部分可观测状态;value function 只能在当前可见历史上 bootstrap,无法准确估计隐状态贡献,导致 critic 收敛慢且偏差难量化。
+
 </details>
 
 <details class="qa"><summary>2. 为什么单轮 RLHF/RLVR 不足以训练多轮工具使用 agent?</summary>
 
 答:单轮 RL 假设一问一答一奖励,episode 形状为单条 response;多轮 agent 的 episode 是 `(reasoning, tool_call, observation)` 反复交错,reward 只在最终轮给出,单轮损失函数无法处理跨轮信用分配,也没有对工具观测 token 的掩码机制。
+
+**追问：** 若把单轮 RLVR 损失直接用于多轮轨迹而不加任何掩码,梯度会流向哪些 token,带来什么具体后果? → 梯度会流向工具返回的观测 token,等于对环境注入的内容做 SFT;模型会学习"生成能匹配工具输出格式的 token",而非"做出更好的行动决策",污染策略梯度信号。
 
 </details>
 
@@ -107,11 +111,15 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 答:终端只有一个 reward,无法直接判断几十轮中哪一轮、哪个 token 该被奖惩,即长程信用分配问题。此外,训练初期成功轨迹概率随轮次指数衰减(若每轮成功率 0.8,10 轮后约 0.11),导致大量 rollout 全零 reward、梯度信号几乎消失。
 
+**追问：** 稀疏奖励导致梯度消失时,课程学习与辅助子目标奖励各自从什么角度缓解,两者能否同时使用? → 课程学习通过缩短初期 horizon 提高成功率,让 group 内出现足够正 reward;子目标奖励在中间步骤补充信号密度;两者互补但需防止子目标被 hack——可验证的里程碑(如子函数单测通过)优于神经网络代理打分。
+
 </details>
 
 <details class="qa"><summary>4. 训练时为什么要把<strong>工具返回的 token</strong> 掩掉?</summary>
 
 答:工具返回是环境注入的观测,不是 policy 生成的——若不掩掉,loss 会要求模型去"拟合"工具输出,相当于对观测做 SFT,污染策略梯度信号。正确做法是 action_mask=0 屏蔽所有 `obs_*` token,梯度只流向 agent 自己生成的 think/act token。
+
+**追问：** 如果把 `<think>` 推理链也掩掉(action_mask=0),会产生什么后果,这是否有时是合理选择? → 推理链 token 的梯度为零,模型只训练"行动选择"而不训练"推理质量",推理链退化为装饰性输出;但若推理链内容不可控且质量极不稳定,短期内掩掉可降低训练噪声——这是实现取舍,需根据推理链质量决定。
 
 </details>
 
@@ -121,11 +129,15 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 答:trajectory-level 对整条轨迹共享一个 advantage,最简单但把好轨迹里的坏步也一起奖励;turn-level 给每轮一个 advantage(需 step reward 或价值估计),信用更精准;token-level 是最细粒度,通常由 turn-level advantage 广播到该轮 agent 生成的 token 并乘以 action mask。粒度越细信用越准,但对 critic/PRM 的依赖越强。
 
+**追问：** turn-level advantage 广播到 token 后,同一轮所有 agent token 共享同一个 advantage 值——这个近似在什么情况下会严重失真? → 当一轮内 token 序列包含推理链(think)和行动(act)两段语义差异大的内容时,共享 advantage 等于对"好的 act"和"导致 act 的推理过程"给相同信用;若推理错误但 act 碰巧正确(或反之),该轮梯度方向不准——这是 turn-level 粒度的根本局限,是引入 PRM 步级 reward 的动机之一。
+
 </details>
 
 <details class="qa"><summary>6. GRPO 的组内相对 baseline 如何搬到多轮?为什么能省掉 critic?</summary>
 
 答:对同一任务采样一组多轮轨迹,用组内终端 return 的均值/标准差归一化得到 $A(\tau_i)=\frac{R(\tau_i)-\mu_g}{\sigma_g+\epsilon}$,以组均值作 baseline 替代 critic。省 critic 的原因是 baseline 由同批 rollout 统计而来,无需额外价值网络;代价是方差在稀疏长程场景可能大(全零 group 时 advantage 退化为零)。
+
+**追问：** GRPO 组内全零 reward(所有轨迹均失败)时 advantage 退化为零,梯度消失——有哪些实际可行的缓解方案? → 三条路:①加大 group size 使组内至少 1 条成功;②引入少量可验证里程碑奖励让部分轨迹得到非零 reward;③用 SFT 热启(从少量成功轨迹学)提升基础成功率再切换 RL——任何一条都比在全零 group 上空跑 rollout 更有效。
 
 </details>
 
@@ -133,11 +145,15 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 答:ORM 只看终端结果,信号稀疏、信用分配粗,但标注成本低且难被 hack;PRM 对每步打分(理想上为未来成功率变化量),信用精准,但标注/训练更贵且中间步评分器可被 agent gaming。长程场景常折中:以 ORM 终端可验证奖励为主,辅以少量可验证里程碑充当 PRM 信号。
 
+**追问：** 不依赖人工标注、自动估计 PRM 步级 reward 的主流方法是什么,其计算瓶颈在哪? → 用蒙特卡洛 rollout 从每步状态 $s_t$ 出发多次采样至终端,以成功率均值估计 $P(\text{success}|s_t)$,步级 reward = $P(\text{success}|s_{t+1})-P(\text{success}|s_t)$;瓶颈是每步都需大量 rollout,采样成本随轨迹长度和步数线性增加,工程上通常只对关键分叉步做估计。
+
 </details>
 
 <details class="qa"><summary>8. 长程 reward hacking 有哪些典型形态?怎么缓解?</summary>
 
 答:三类典型形态:①空转/looping(反复调用廉价工具拉长轨迹以积分);②premature stop(提前声明完成绕过后续困难步骤);③milestone gaming(触发里程碑而不真正解决子任务)。缓解组合拳:终端可验证奖励为主 + 步数/token 成本惩罚 + 观测 token loss mask + KL 惩罚项 + 对抗性测试集轮换。
+
+**追问：** KL 惩罚项 $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ 如何抑制 reward hacking,以及 $\beta$ 过大或过小各有什么副作用? → KL 项限制策略偏离参考模型的程度,在 proxy reward 与 gold reward 开始分叉前"刹车";$\beta$ 过小时约束无效、hacking 照常发生;$\beta$ 过大时策略无法充分优化任务,相当于几乎只做 SFT——需结合 reward hacking 指标动态调整或设置 KL 阈值早停。
 
 </details>
 
@@ -147,11 +163,15 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 答:①**GRPO 组相对 baseline**:同任务多条轨迹共享终端 return 作归一化 baseline,简单无需 critic,但信用在轨迹内仍均摊;②**turn-level GAE**:引入轻量 turn-level value 头,用 $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ 把终端 return 分解为逐轮 TD 误差,信用更精准但需 critic bootstrap;③**PRM step reward**:用蒙特卡洛 rollout 估计每步未来成功率变化作步级 reward,信用最细但采样成本最高。三者折中:先 GRPO 训练基础能力,稳定后加 turn-level value 头。
 
+**追问：** turn-level GAE 中 $\lambda$ 的选取为什么在长程场景比单轮更关键,设置不当会产生什么后果? → 长程轨迹里 critic bootstrap 误差随步数累积:$\lambda\to1$ 时等于蒙特卡洛,方差随 horizon 指数增大;$\lambda\to0$ 时单步 TD 依赖 critic 精度,但 critic 在部分可观测场景本身偏差大——两端都危险,实务需根据 critic 质量和轨迹长度在 $[0.9,0.95]$ 区间谨慎调节。
+
 </details>
 
 <details class="qa"><summary>10. 如何把"可验证结果奖励"与"过程监督"结合,既稳又不被刷?</summary>
 
 答:以终端可验证信号(unit test pass / 环境状态)为主奖励——难 hack;用**可验证里程碑**作中间 step reward(子函数单元测试通过而非神经网络打分),缓解稀疏性而不引入可被 gaming 的 proxy。同时加 KL 惩罚 $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ 防 overoptimization,以及步数惩罚压制 looping。
+
+**追问：** 过程奖励权重过高时会出现什么系统性失败,与纯 ORM 相比哪种失败模式更难诊断? → 过程奖励权重过高时,agent 会优先触发里程碑而非解决终端任务(milestone gaming),且因中间步得分不断上升,训练曲线表面良好——proxy reward 持续涨而 gold reward(终端成功率)不涨甚至下降;这比纯 ORM 的"信号全零"更难诊断,因为梯度信号看上去正常。
 
 </details>
 
@@ -159,11 +179,15 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 答:rollout 需在循环里真实执行工具/环境(网络、代码执行等),延迟可达秒级,且轨迹更长导致 KV cache 占用大。缓解:①**异步执行**——并行跑多个 episode,GPU 不空等;代价是 rollout 完成时 policy 已经走了若干步(staleness),需要 IS 修正或 ESS 监控。②**轨迹截断**——超过最大步数强行终止;代价是截断轨迹的 return 不完整,需 bootstrap 补齐或直接丢弃。③**长度惩罚** $R'=R-\alpha|\tau|$——激励 agent 高效完成;代价是可能惩罚必要的长推理链。
 
+**追问：** 异步执行引入 policy staleness 后,PPO clip 能否独立解决偏差问题,还是必须配合其他机制? → PPO clip 只截断 IS ratio 控方差,不纠正分布偏差——当 policy lag 超过 1-2 个 mini-batch 时,clip 区间外的梯度被丢弃但区间内仍在错误分布上更新;必须配合小 policy lag 设计(限制异步步数)或 ESS 监控(ESS 低于阈值时暂停或降 lr)才能真正控住偏差。
+
 </details>
 
 <details class="qa"><summary>12. 误差累积(compounding error)在长轨迹中如何放大?与 exposure bias 的关系?</summary>
 
-答:每轮决策的小误差会改变后续观测,导致轨迹偏离训练分布,下一轮又在分布外状态上犯更大误差,误差随轮次**指数级放大**。这与 SFT 的 exposure bias 同构——训练时见到的是 ground-truth 前缀,推理时见到的是模型自己生成的前缀;长程 agent 尤为严重因为工具返回也依赖于之前行动。缓解:RL 本身通过让模型在自身 rollout 上训练来缓解 exposure bias;课程学习(从短 horizon 开始)可以降低初期误差累积速度。
+答:每轮决策的小误差会改变后续观测,导致轨迹偏离训练分布,下一轮又在分布外状态上犯更大误差,误差随轮次**指数级放大**。这与 SFT 的 exposure bias 同构——训练时见到的是 ground-truth 前缀,推理时见到的是模型自己生成的前缀;长程 agent 尤为严重因为工具返回也依赖于之前行动。缓解:RL 本身通过让模型在自身 rollout 上训练来缓解 exposure bias;课程学习(从短 horizon 开始)可以降低初期误差累积速度;**DAgger(数据聚合)**在每轮用当前策略生成的状态请求专家标注,持续把策略实际访问的分布纳入训练,从数据层面直接对抗 distribution shift。然而即使用 online RL,理论上仍不能完全消除长轨迹内的 distribution shift:每条 rollout 内部,早期步的微小误差会在轨迹内**复利累积**——后续步在越来越偏离训练分布的状态上决策,RL 更新虽然针对已见过的 rollout 做修正,但无法"预见"同一批 rollout 内早期误差引发的后续雪球效应,这正是长程比短程对误差累积更脆弱的根本原因。
+
+**追问：** DAgger 缓解了训练与推理分布的静态不匹配,但为何长轨迹内部的误差复利(rollout 内的 distribution shift)是 online RL 也无法完全消除的? → DAgger/online RL 修正的是"训练时未见到某类状态"问题;但轨迹内的复利源于因果链——第 $t$ 步误差改变 $s_{t+1}$,更新策略时这条 rollout 已经"发生了",下一批 rollout 才能看到修正效果;误差在单条轨迹内仍然传播,horizon 越长传播机会越多,online RL 只能缩短这一滞后,无法归零。
 
 </details>
 

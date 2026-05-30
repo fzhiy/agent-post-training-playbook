@@ -1,5 +1,10 @@
 """Agentic-RL turn credit assignment, from scratch.
 
+No high-level RL libraries (e.g. trl.PPOTrainer, trl.GRPOTrainer,
+torch.distributions convenience wrappers, or any framework that provides
+discounted-return / advantage / policy-gradient loss out of the box) —
+every primitive must be implemented from first principles.
+
 Covers three primitives needed to train an LLM agent with RL:
 
   1. discounted_return(rewards, gamma)          -- scalar per step

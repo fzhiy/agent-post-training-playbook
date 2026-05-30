@@ -1,5 +1,9 @@
 """EWC (Elastic Weight Consolidation) + Experience Replay, from scratch.
 
+No continual-learning libraries (e.g. Avalanche, Sequoia, or any framework
+that provides EWC / replay / Fisher estimation out of the box) — the Fisher
+diagonal, EWC penalty, and replay buffer must be built from first principles.
+
 Continual learning: train Task 1, then adapt to Task 2 without forgetting.
 Two anti-forgetting strategies implemented from first principles:
 

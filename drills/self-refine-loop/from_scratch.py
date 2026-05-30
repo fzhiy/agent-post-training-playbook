@@ -1,5 +1,9 @@
 """Self-Refine loop, from scratch — toy continuous objective.
 
+No pre-built self-refinement frameworks (e.g. guidance, dspy.Predict with
+self-refine, or any library that automates the generate→score→reflect→edit
+loop) — the whole point is to wire every iteration step by hand.
+
 Concept (Madaan et al., 2023, arXiv:2303.17651):
     generate -> score -> reflect -> edit -> repeat, keeping the best so far.
 

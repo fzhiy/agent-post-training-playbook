@@ -1,66 +1,66 @@
 # Agentic & Long-horizon RL
 
-> The **next step** after single-turn reasoning RL (GRPO / RLVR, see sister repo [reasoning-rl-frontier](https://ac.fzhiy.net/post-training-playbook/cheatsheet-reasoning-rl-frontier.html)): extending the reward signal from "one question, one answer, one reward" to **multi-turn trajectories** (think → call tool → observe)\*.
+> The **next step** beyond single-turn reasoning RL (GRPO / RLVR, see the sibling repository [reasoning-rl-frontier](https://ac.fzhiy.net/post-training-playbook/cheatsheet-reasoning-rl-frontier.html)): Extending the reward signal from "one prompt, one response, one reward" to **multi-turn trajectories** (think → call tool → observe)*.
 
-> ⚠️ **Study notes, not the author's own research** (see README integrity statement). Numbers / conclusions follow the original papers; uncertainties are annotated.
+> ⚠️ **Study notes, not author's research findings** (see README integrity statement). Numbers and conclusions are based on the original papers; uncertain points are noted.
 
-## 0. The evolution
+## 0. One-sentence evolution
 
-`Single-turn RLHF (prompt→response→reward)` → `Single-turn verifiable RLVR (correct/wrong→reward)` → **`Multi-turn agentic RL (trajectory→sparse terminal reward)`**.  
-What changes is not the loss function but the **shape of the episode**: one episode is `(reasoning, tool_call, observation)` repeated across turns<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">Interleaving reasoning and tool calls so the LLM thinks and acts simultaneously (think→act→observe). <a href="https://arxiv.org/abs/2210.03629">Yao 2022 ↗</a></span></span>, and the reward is usually given only **once at the end** (task success or failure).
+`Single-turn RLHF (prompt→response→reward)` → `Single-turn verifiable RLVR (correct/incorrect→reward)` → **`Multi-turn agentic RL (trajectory→sparse terminal reward)`**.
+What changes is not the loss function, but the **shape of the episode**: An episode consists of `(reasoning, tool_call, observation)` repeated over multiple turns<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">Enabling LLMs to interleave reasoning with tool calls (think→act→observe), thinking while acting.<a href="https://arxiv.org/abs/2210.03629">Yao 2022 ↗</a></span></span>, and the reward is often given only **once at the end** (task success or failure).
 
 ## 1. What makes it long-horizon
 
-| Dimension | Single-turn reasoning RL | Long-horizon agentic RL |
+| Dimension | Single-turn Reasoning RL | Long-horizon Agentic RL |
 |---|---|---|
-| Episode length | 1 turn | Several to dozens of turns |
-| Reward | One per response | **Sparse / delayed**, often only at the terminal |
+| Episode Length | 1 turn | Several to dozens of turns |
+| Reward | One per response | **Sparse / Delayed**, often only at the terminal |
 | Observation | Fully visible (prompt) | **Partially visible** (only known after tool returns) |
-| Action space | Tokens | Tokens + **tool calls** + when to stop |
-| Main challenge | Preference / correctness | **Long-horizon credit assignment** + error accumulation |
+| Action Space | Tokens | Tokens + **tool calls** + when to stop |
+| Main Difficulty | Preference / Correctness | **Long-horizon credit assignment** + error accumulation |
 
 ## 2. Formalization (POMDP)
 
-Treat a trajectory $\tau=(s_0,a_0,\dots,s_T,a_T)$ as a POMDP. The terminal task reward $R(\tau)\in\{0,1\}$ (success/failure) or a scalar score. Trajectory return:
+Consider a trajectory $\tau=(s_0,a_0,\dots,s_T,a_T)$ as a POMDP. The terminal task reward $R(\tau)\in\{0,1\}$ (success/failure) or a scalar score. The trajectory return is
 
 $$G_t=\sum_{k=0}^{T-t}\gamma^{k}\,r_{t+k}.$$
 
-In practice, a "turn" is often used as the decision granularity (turn-level MDP), while gradients still land on the **tokens generated** in that turn — i.e., **turn-level credit + token-level updates**.
+In practice, a "turn" is often used as the decision granularity (turn-level MDP), while gradients still fall on the **tokens generated within that turn** — i.e., **turn-level credit + token-level updates**.
 
-## 3. Credit assignment (the core challenge)
+## 3. Credit assignment (core difficulty)
 
-The terminal provides only one reward; the question is: **across these dozens of turns, which turn and which token should be rewarded or penalized?**
+With only one terminal reward, the question is: **Which turn and which token among these dozens should be rewarded/punished?**
 
-- **Trajectory-level**: the entire trajectory shares one advantage — simplest, but rewards bad steps inside a good trajectory along with the rest.
-- **Turn-level**: each turn gets its own advantage (requires step rewards or value estimates).
-- **Token-level**: finest granularity; typically **broadcast** from the turn-level advantage to that turn's tokens.
+- **trajectory-level**: The entire trajectory shares one advantage — simplest, but also rewards "bad steps in a good trajectory".
+- **turn-level**: Gives each turn an advantage (requires step rewards or value estimation).
+- **token-level**: Most fine-grained; typically **broadcast** from the turn-level advantage to the tokens in that turn.
 
-GRPO<span class="cite-wrap"><a class="cite" id="fnref-2" href="#ref-2">2</a><span class="cite-note">Sample a group of rollouts for the same task; use group-relative returns as the baseline, eliminating the critic. <a href="https://arxiv.org/abs/2402.03300">Shao 2024 ↗</a></span></span> can be carried over directly: **sample a group of trajectories for the same task and use group-relative returns as the baseline** (no critic needed):
+The idea of GRPO<span class="cite-wrap"><a class="cite" id="fnref-2" href="#ref-2">2</a><span class="cite-note">Sampling a group of rollouts for the same task, using relative returns within the group as the baseline, eliminating the need for a critic.<a href="https://arxiv.org/abs/2402.03300">Shao 2024 ↗</a></span></span> is naturally transferable: **Sample a group of trajectories for the same task, use the relative return within the group as the baseline** (no critic needed):
 
 $$A(\tau_i)=\frac{R(\tau_i)-\mathrm{mean}(R)}{\mathrm{std}(R)+\epsilon}.$$
 
-> Process reward **PRM**<span class="cite-wrap"><a class="cite" id="fnref-3" href="#ref-3">3</a><span class="cite-note">Score each reasoning step (process supervision) rather than only looking at final correctness. <a href="https://arxiv.org/abs/2305.20050">Lightman 2023 ↗</a></span></span> (scoring each step) is friendlier for long-horizon credit assignment, but **annotation / training is more expensive** and it can itself be hacked; **ORM** (outcome only) is cheaper but coarse-grained for credit assignment. Long-horizon settings often combine both.
+> A **Process Reward Model (PRM)**<span class="cite-wrap"><a class="cite" id="fnref-3" href="#ref-3">3</a><span class="cite-note">Scoring each step of reasoning (process supervision), not just the final correctness.<a href="https://arxiv.org/abs/2305.20050">Lightman 2023 ↗</a></span></span> (scoring each step) is more friendly for long-horizon credit assignment, but **annotation/training is more expensive** and it can be hacked itself; an **ORM** (only looking at the outcome) is cheaper but has coarse credit assignment. Long-horizon scenarios often involve a compromise between the two.
 
 ## 4. Reward design
 
-- **Verifiable outcome rewards (RLVR→agentic)**<span class="cite-wrap"><a class="cite" id="fnref-4" href="#ref-4">4</a><span class="cite-note">Use automatically checkable correctness (rather than a reward model) as the RL signal. <a href="https://arxiv.org/abs/2411.15124">Lambert 2024 ↗</a></span></span>: automatically checkable terminal signals are the most stable — unit test pass, environment state achieved, verifiable answer.
-- **Process / step reward**: awarding points at intermediate milestones mitigates sparsity, but is **easily gamed** (the agent learns to trigger milestones without solving the task).
-- **Long-horizon reward hacking**: the longer the trajectory, the more shortcuts exist (idle looping to accumulate steps, repeatedly calling cheap tools). Mitigations: terminal-verifiable rewards as primary signal + step/cost penalty + **read-only treatment of tool outputs** (see §5 masking).
+- **Verifiable Outcome Reward (RLVR→agentic)**<span class="cite-wrap"><a class="cite" id="fnref-4" href="#ref-4">4</a><span class="cite-note">Using automatically determinable correctness (instead of a reward model) as the RL signal.<a href="https://arxiv.org/abs/2411.15124">Lambert 2024 ↗</a></span></span>: The most stable terminal signal is one that can be automatically determined — unit tests passing, environment state achieved, answer verifiable.
+- **Process / Step Reward**: Giving points for intermediate milestones alleviates sparsity but is **prone to gaming** (the agent learns to trigger milestones without solving the task).
+- **Long-horizon reward hacking**: The longer the trajectory, the more shortcuts exist (idling to accumulate steps, repeatedly calling cheap tools). Mitigation: Focus on verifiable terminal rewards + step/token cost penalties + **read-only but don't learn from tool outputs** (see §5 masking).
 
 ## 5. Algorithm essentials
 
-Two "long-horizon-specific" details in multi-turn PPO<span class="cite-wrap"><a class="cite" id="fnref-5" href="#ref-5">5</a><span class="cite-note">Policy gradient with clipping; baseline algorithm for RLHF / agentic RL. <a href="https://arxiv.org/abs/1707.06347">Schulman 2017 ↗</a></span></span> / GRPO:
+Two "long-horizon specific" details for multi-turn PPO<span class="cite-wrap"><a class="cite" id="fnref-5" href="#ref-5">5</a><span class="cite-note">Policy gradient with clipping, the baseline algorithm for RLHF / agentic RL.<a href="https://arxiv.org/abs/1707.06347">Schulman 2017 ↗</a></span></span> / GRPO:
 
-1. **Observation token masking**: tool returns / environment observations are **injected** into the context, not generated by the policy — they **must be masked** in the loss; otherwise the model is being asked to "fit" tool outputs (analogous to loss masking in SFT).
-2. **Advantage broadcasting + masking**: the turn-level advantage is broadcast to all agent-generated tokens in that turn, then multiplied by the action mask.
+1. **Observation Token Masking**: Tool returns / environment observations are **injected** into the context, not generated by the policy — they must be **masked out** in the loss, otherwise it's equivalent to making the model "fit" the tool outputs (analogous to SFT loss masking).
+2. **Advantage Broadcasting + Masking**: The turn-level advantage is broadcast to the tokens generated by the agent in that turn, then multiplied by the action mask.
 
 ```python
 import torch
 
 def group_relative_advantages(returns, group_ids, eps=1e-6):
-    """GRPO-style group-relative advantage (no critic).
-    returns:   (N,) terminal return of each trajectory (e.g. success={0,1} or scalar)
-    group_ids: (N,) multiple rollouts of the same task share one group id
+    """GRPO-style group relative advantage (no critic).
+    returns:   (N,) terminal return per trajectory (e.g., success={0,1} or scalar score)
+    group_ids: (N,) multiple rollouts for the same task share one group id
     """
     adv = torch.zeros_like(returns)
     for g in group_ids.unique():
@@ -70,20 +70,20 @@ def group_relative_advantages(returns, group_ids, eps=1e-6):
     return adv
 
 def masked_pg_loss(logp, adv_per_token, action_mask):
-    """Policy gradient loss: back-propagate only through agent-generated tokens.
-    logp:          (B,T) log-prob of the taken token under the current policy
-    adv_per_token: (B,T) broadcast from turn-level advantage to token level
-    action_mask:   (B,T) 1=agent-generated token, 0=tool output/observation (masked)
+    """Policy gradient loss: backpropagate only on tokens generated by the agent.
+    logp:          (B,T) log-probability of the token taken under the current policy
+    adv_per_token: (B,T) broadcast from turn-level advantage to tokens
+    action_mask:   (B,T) 1=token generated by agent, 0=tool output/observation (masked)
     """
     pg = -(logp * adv_per_token) * action_mask
     return pg.sum() / action_mask.sum().clamp_min(1)
 ```
 
-> During rollout, tools / the environment must be **actually executed inside the loop** (often asynchronously); longer trajectories → more expensive sampling → one of the main system bottlenecks in agentic RL.
+> The rollout phase requires **actually executing tools/environment within the loop** (often asynchronously), leading to longer trajectories → more expensive sampling → a major system bottleneck for agentic RL.
 
 ## 6. Bridge from single-turn
 
-The sister repo's **GRPO / RLVR / loss masking** are the building blocks; agentic RL ≈ applying them **over trajectories** + solving "credit assignment for sparse terminal rewards". Once you know single-turn RL, grasping three points — **trajectoryification + masking + group-relative baseline** — is sufficient to transfer.
+The **GRPO / RLVR / loss masking** from the sibling repository are the building blocks; Agentic RL ≈ **applying them to trajectories** + solving "credit assignment for sparse terminal rewards". If you understand single-turn, grasping the three points of "trajectory formulation + masking + group relative baseline" enables the transition.
 
 ---
 
@@ -91,79 +91,103 @@ The sister repo's **GRPO / RLVR / loss masking** are the building blocks; agenti
 
 ### L1 Basics
 
-<details class="qa"><summary>1. What makes a task "long-horizon"? Give two LLM-agent examples.</summary>
+<details class="qa"><summary>1. What kind of task is considered "long-horizon"? Give two examples of LLM agents.</summary>
 
-Answer: The task requires multiple think→act→observe cycles and the reward is given only at the terminal (sparse / delayed); the action space includes tool calls. Examples: ① a code agent that iteratively calls a code executor to debug a program; ② a search-and-summarize agent that issues multiple rounds of web-API queries before generating a report.
+Answer: A task requires multiple think→act→observe cycles, with the reward given only at the terminal (sparse/delayed), and the action space includes tool calls. Examples: ① A code agent cyclically calls a code executor to debug a program; ② A search+summarization agent queries a web API multiple times before generating a report.
 
-</details>
-
-<details class="qa"><summary>2. Why is single-turn RLHF/RLVR insufficient for training multi-turn tool-using agents?</summary>
-
-Answer: Single-turn RL assumes one question, one answer, one reward, and the episode is a single response. A multi-turn agent's episode is `(reasoning, tool_call, observation)` interleaved repeatedly, with reward given only at the final turn. Single-turn loss functions cannot handle cross-turn credit assignment, and they lack a masking mechanism for observation tokens.
+**Follow-up:** Why is a long-horizon task modeled as a POMDP rather than an MDP, and what is the direct consequence for value estimation? → The tool return (next turn's observation) is unknown before acting; the agent is in a partially observable state. The value function can only bootstrap on the currently visible history, cannot accurately estimate the contribution of hidden states, leading to slow convergence and hard-to-quantify bias for the critic.
 
 </details>
 
-<details class="qa"><summary>3. Why is sparse / delayed reward difficult?</summary>
+<details class="qa"><summary>2. Why is single-turn RLHF/RLVR insufficient for training multi-turn tool-use agents?</summary>
 
-Answer: The terminal provides only one reward, so there is no direct way to determine which turn or which token among dozens deserves reward or penalty — this is the long-horizon credit assignment problem. Additionally, the probability of a successful trajectory decays exponentially with the number of turns at the start of training (if per-turn success rate is 0.8, after 10 turns it is approximately 0.11), causing most rollouts to have all-zero rewards and the gradient signal to nearly vanish.
+Answer: Single-turn RL assumes one prompt, one response, one reward; the episode shape is a single response. A multi-turn agent's episode consists of `(reasoning, tool_call, observation)` interleaved repeatedly, with the reward given only on the final turn. The single-turn loss function cannot handle cross-turn credit assignment and lacks a masking mechanism for tool observation tokens.
+
+**Follow-up:** If the single-turn RLVR loss is directly applied to multi-turn trajectories without any masking, which tokens will the gradients flow to, and what specific consequences does this bring? → Gradients will flow to the observation tokens returned by tools, effectively performing SFT on the environment-injected content. The model will learn to "generate tokens that match the tool output format" rather than "make better action decisions," contaminating the policy gradient signal.
 
 </details>
 
-<details class="qa"><summary>4. Why must <strong>tool-return tokens</strong> be masked during training?</summary>
+<details class="qa"><summary>3. Why are sparse / delayed rewards difficult?</summary>
 
-Answer: Tool returns are observations injected by the environment, not generated by the policy — if they are not masked, the loss forces the model to "fit" tool outputs, which is equivalent to performing SFT on observations and contaminates the policy gradient signal. The correct approach is action_mask=0 for all `obs_*` tokens, so gradients flow only to the think/act tokens generated by the agent.
+Answer: There is only one terminal reward, making it impossible to directly judge which turn or token among dozens should be rewarded/punished—the long-horizon credit assignment problem. Furthermore, early in training, the probability of success trajectories decays exponentially with the number of turns (if each turn's success rate is 0.8, after 10 turns it's ~0.11), leading to many rollouts receiving zero reward, and the gradient signal nearly vanishes.
+
+**Follow-up:** When sparse rewards cause gradient vanishing, how do curriculum learning and auxiliary subgoal rewards mitigate this from different angles, and can they be used simultaneously? → Curriculum learning increases the success rate early on by shortening the initial horizon, allowing sufficient positive rewards within a group. Subgoal rewards supplement signal density at intermediate steps. The two are complementary, but subgoal hacking must be prevented—verifiable milestones (e.g., passing unit tests for sub-functions) are better than neural network proxy scores.
+
+</details>
+
+<details class="qa"><summary>4. Why must <strong>tokens returned by tools</strong> be masked out during training?</summary>
+
+Answer: Tool returns are environment-injected observations, not generated by the policy—if not masked, the loss will require the model to "fit" the tool output, equivalent to performing SFT on observations, contaminating the policy gradient signal. The correct approach is to set action_mask=0 for all `obs_*` tokens, so gradients only flow to the think/act tokens generated by the agent itself.
+
+**Follow-up:** If the `<think>` reasoning chain is also masked (action_mask=0), what consequences does this produce, and is it sometimes a reasonable choice? → The gradients for reasoning chain tokens become zero; the model only trains "action selection" without training "reasoning quality," causing the reasoning chain to degrade into decorative output. However, if the reasoning chain content is uncontrollable and its quality highly unstable, masking it in the short term can reduce training noise—this is an implementation trade-off that depends on the reasoning chain's quality.
 
 </details>
 
 ### L2 Advanced
 
-<details class="qa"><summary>5. What are trajectory-level / turn-level / token-level advantage? What are the trade-offs?</summary>
+<details class="qa"><summary>5. What are trajectory-level / turn-level / token-level advantages? What are the trade-offs?</summary>
 
-Answer: Trajectory-level shares one advantage across the entire trajectory — simplest, but rewards bad steps inside a good trajectory; turn-level assigns each turn its own advantage (requires step rewards or value estimates) for more precise credit; token-level is the finest granularity, typically broadcast from the turn-level advantage to the agent-generated tokens in that turn multiplied by the action mask. Finer granularity gives more accurate credit but increases dependency on a critic/PRM.
+Answer: Trajectory-level shares one advantage across the entire trajectory—simplest but rewards bad steps in good trajectories. Turn-level gives each turn an advantage (requires step rewards or value estimation), providing more precise credit. Token-level is the finest granularity, typically obtained by broadcasting the turn-level advantage to the tokens generated by the agent in that turn and multiplying by the action mask. Finer granularity leads to more precise credit but increases reliance on the critic/PRM.
 
-</details>
-
-<details class="qa"><summary>6. How does GRPO's group-relative baseline transfer to multi-turn? Why can it eliminate the critic?</summary>
-
-Answer: Sample a group of multi-turn trajectories for the same task and normalize by the group's mean and standard deviation of terminal returns to obtain $A(\tau_i)=\frac{R(\tau_i)-\mu_g}{\sigma_g+\epsilon}$, using the group mean as a baseline instead of a critic. The critic is eliminated because the baseline is derived from statistics of the same batch of rollouts, requiring no separate value network. The cost is that variance can be large in sparse long-horizon settings (when an entire group returns all zeros, the advantage degenerates to zero).
+**Follow-up:** After broadcasting turn-level advantage to tokens, all agent tokens within the same turn share the same advantage value—under what circumstances does this approximation become severely distorted? → When the token sequence within a turn contains two segments with large semantic differences (think and act), sharing the advantage applies the same credit to "good acts" and "the reasoning process that led to the act." If the reasoning is incorrect but the act happens to be correct (or vice versa), the gradient direction for that turn becomes inaccurate—this is a fundamental limitation of turn-level granularity and a motivation for introducing PRM step-level rewards.
 
 </details>
 
-<details class="qa"><summary>7. What are the trade-offs between PRM and ORM for long-horizon credit assignment?</summary>
+<details class="qa"><summary>6. How does GRPO's group relative baseline translate to multi-turn? Why can it eliminate the critic?</summary>
 
-Answer: ORM looks only at the terminal result — the signal is sparse and credit assignment is coarse, but annotation cost is low and it is hard to hack. PRM scores each step (ideally the change in future success probability), giving precise credit, but annotation/training is more expensive and the intermediate-step scorer can be gamed by the agent. Long-horizon settings often combine both: terminal verifiable reward (ORM) as the primary signal, supplemented by a small number of verifiable milestones serving as PRM signals.
+Answer: For the same task, sample a group of multi-turn trajectories and normalize using the mean/standard deviation of the terminal returns within the group to obtain $A(\tau_i)=\frac{R(\tau_i)-\mu_g}{\sigma_g+\epsilon}$, using the group mean as the baseline to replace the critic. The reason the critic is eliminated is that the baseline is derived from the statistics of the same batch of rollouts, requiring no additional value network. The cost is that the variance may be large in sparse long-horizon scenarios (when the group is all zeros, the advantage degenerates to zero).
 
-</details>
-
-<details class="qa"><summary>8. What are the typical forms of long-horizon reward hacking? How can they be mitigated?</summary>
-
-Answer: Three typical forms: ① idle looping (repeatedly calling cheap tools to extend the trajectory and accumulate milestone points); ② premature stop (declaring task completion early to skip subsequent difficult steps); ③ milestone gaming (triggering milestone checkpoints without genuinely solving the subtask). Mitigation combination: terminal verifiable reward as primary + step/token cost penalty + observation token loss mask + KL penalty term + adversarial test-set rotation.
+**Follow-up:** When GRPO groups have all-zero rewards (all trajectories fail), the advantage degenerates to zero, and gradients vanish—what are some practically feasible mitigation strategies? → Three paths: ① Increase group size $G$ to ensure at least 1 success within the group; ② Introduce a small amount of verifiable milestone rewards to give some trajectories non-zero rewards; ③ Use SFT warm-starting (learning from a small set of successful trajectories) to improve the base success rate before switching to RL—any of these is more effective than running rollouts on an all-zero group.
 
 </details>
 
-### L3 Deep-dive
+<details class="qa"><summary>7. What are the trade-offs between PRM and ORM in long-horizon credit assignment?</summary>
 
-<details class="qa"><summary>9. With only one 0/1 reward at the terminal, how do you reasonably distribute credit across dozens of turns? Give at least two approaches and compare them.</summary>
+Answer: ORM only looks at the terminal result—signal is sparse, credit assignment is coarse, but annotation cost is low and it's harder to hack. PRM scores each step (ideally the change in future success probability)—credit is precise, but annotation/training is more expensive and the intermediate step scorer can be gamed by the agent. Long-horizon scenarios often compromise: ORM verifiable terminal rewards are primary, supplemented by a small number of verifiable milestones acting as PRM signals.
 
-Answer: ① **GRPO group-relative baseline**: multiple trajectories of the same task share terminal returns for normalized baseline — simple, no critic required, but credit is still averaged within the trajectory. ② **Turn-level GAE**: introduce a lightweight turn-level value head and use $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ to decompose the terminal return into per-turn TD errors — more precise credit but requires critic bootstrapping. ③ **PRM step reward**: estimate the change in per-step future success probability via Monte Carlo rollouts as a step-level reward — finest credit but highest sampling cost. Practical compromise: start with GRPO to build basic competence, then add a turn-level value head once training stabilizes.
-
-</details>
-
-<details class="qa"><summary>10. How can "verifiable outcome rewards" and "process supervision" be combined to be both stable and unhackable?</summary>
-
-Answer: Use terminal verifiable signals (unit test pass / environment state achieved) as the primary reward — hard to hack. Use **verifiable milestones** as intermediate step rewards (subtask unit tests pass rather than neural network scores), mitigating sparsity without introducing a gaming-prone proxy. Also add a KL penalty $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ to prevent overoptimization, and a step-count penalty to suppress looping.
+**Follow-up:** What are the mainstream methods for automatically estimating PRM step-level rewards without relying on manual annotation, and what are their computational bottlenecks? → Use Monte Carlo rollouts starting from each step's state $s_t$, sampling multiple times to the terminal, and estimate the success rate mean $P(\text{success}|s_t)$. Step-level reward = $P(\text{success}|s_{t+1}) - P(\text{success}|s_t)$. The bottleneck is that each step requires numerous rollouts, and sampling cost increases linearly with trajectory length and number of steps. In practice, estimation is often only done for critical branching steps.
 
 </details>
 
-<details class="qa"><summary>11. Why is agentic RL rollout expensive? What engineering mitigations exist (async execution, truncation, length penalty)? What are their costs?</summary>
+<details class="qa"><summary>8. What are typical forms of long-horizon reward hacking? How to mitigate them?</summary>
 
-Answer: Rollout requires actually executing tools/the environment inside the loop (network, code execution, etc.), with latency up to seconds, and longer trajectories lead to large KV-cache occupancy. Mitigations: ① **Async execution** — run multiple episodes in parallel so the GPU does not idle; cost: when a rollout completes the policy has already advanced several steps (staleness), requiring IS correction or ESS monitoring. ② **Trajectory truncation** — forcibly terminate at the maximum number of steps; cost: truncated trajectories have incomplete returns that need bootstrap compensation or must be discarded. ③ **Length penalty** $R'=R-\alpha|\tau|$ — incentivizes the agent to complete tasks efficiently; cost: may penalize necessary long reasoning chains.
+Answer: Three typical forms: ① Idling/Looping (repeatedly calling cheap tools to lengthen the trajectory for milestone points); ② Premature Stop (declaring "task complete" early to bypass subsequent difficult steps); ③ Milestone Gaming (triggering milestones without truly solving subtasks). Mitigation combination: Focus on verifiable terminal rewards + step/token cost penalties + observation token loss mask + KL penalty term + adversarial test set rotation.
+
+**Follow-up:** How does the KL penalty term $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ suppress reward hacking, and what are the side effects of $\beta$ being too large or too small? → The KL term limits the degree of policy deviation from the reference model, "braking" before the proxy reward and gold reward diverge. When $\beta$ is too small, the constraint is ineffective and hacking proceeds as usual. When $\beta$ is too large, the policy cannot sufficiently optimize the task, effectively doing mostly SFT—requires dynamic adjustment of $\beta$ based on reward hacking indicators or setting a KL threshold for early stopping.
 
 </details>
 
-<details class="qa"><summary>12. How does compounding error amplify over long trajectories? What is its relationship to exposure bias?</summary>
+### L3 Deep Dive
 
-Answer: Small errors in each turn's decision alter subsequent observations, causing the trajectory to drift from the training distribution. The next turn then makes larger errors in out-of-distribution states, and errors **amplify exponentially** with the number of turns. This is structurally isomorphic to SFT's exposure bias — during training, ground-truth prefixes are seen; during inference, the model's own generated prefixes are seen. Long-horizon agents are particularly vulnerable because tool returns also depend on prior actions. Mitigation: RL itself mitigates exposure bias by training the model on its own rollouts; curriculum learning (starting from short horizons) can reduce the rate of early error accumulation.
+<details class="qa"><summary>9. When the terminal reward is a single 0/1, how can credit be reasonably distributed across dozens of turns? Provide at least two approaches and compare them.</summary>
+
+Answer: ① **GRPO Group Relative Baseline**: Multiple trajectories for the same task share the terminal return for normalized baseline, simple and critic-free, but credit is still uniformly distributed within the trajectory. ② **Turn-level GAE**: Introduce a lightweight turn-level value head, use $\hat{A}^{\text{GAE}}=\sum(\gamma\lambda)^l\delta_{t+l}$ to decompose the terminal return into per-turn TD errors, providing more precise credit but requiring critic bootstrapping. ③ **PRM Step Reward**: Use Monte Carlo rollouts to estimate the change in future success probability for each step as step-level reward, providing the finest credit but at the highest sampling cost. A compromise: First train basic capabilities with GRPO, then add a turn-level value head after stabilization.
+
+**Follow-up:** Why is the choice of $\lambda$ in turn-level GAE more critical in long-horizon scenarios than in single-turn, and what consequences arise from setting it improperly? → In long trajectories, critic bootstrapping error accumulates with the number of steps: $\lambda\to1$ approaches Monte Carlo, and variance grows exponentially with horizon; $\lambda\to0$ relies on single-step TD and critic accuracy, but the critic itself has large bias in partially observable scenarios—both extremes are dangerous. In practice, $\lambda$ needs to be carefully tuned within the $[0.9,0.95]$ range based on critic quality and trajectory length.
+
+</details>
+
+<details class="qa"><summary>10. How to combine "verifiable outcome reward" with "process supervision" to be stable yet not gameable?</summary>
+
+Answer: Use verifiable terminal signals (unit test pass / environment state) as the primary reward—hard to hack. Use **verifiable milestones** as intermediate step rewards (e.g., passing unit tests for sub-functions, not neural network scoring) to alleviate sparsity without introducing a gameable proxy. Simultaneously add a KL penalty $R'=R-\beta\,\text{KL}(\pi_\theta\|\pi_\text{ref})$ to prevent overoptimization, and apply step penalties to suppress looping.
+
+**Follow-up:** What systematic failure occurs when process reward weight is too high, and which failure mode is harder to diagnose compared to pure ORM? → When process reward weight is too high, the agent prioritizes triggering milestones over solving the terminal task (milestone gaming). Since intermediate step scores keep rising, the training curve appears good—proxy reward continuously increases while gold reward (terminal success rate) does not increase or even decreases. This is harder to diagnose than the "all-zero signal" of pure ORM because the gradient signal appears normal.
+
+</details>
+
+<details class="qa"><summary>11. Why are rollouts for agentic RL expensive? What engineering mitigations exist (asynchronous execution, truncation, length penalties)? What are their respective costs?</summary>
+
+Answer: Rollouts require actually executing tools/environment within the loop (networking, code execution, etc.), which can have second-level latency. Longer trajectories also lead to large KV cache usage. Mitigations: ① **Asynchronous execution**—run multiple episodes in parallel so the GPU doesn't idle; the cost is that when a rollout completes, the policy may have already taken several steps (staleness), requiring IS correction or ESS monitoring. ② **Trajectory truncation**—forcibly terminate if the maximum step count is exceeded; the cost is that truncated trajectories have incomplete returns, requiring bootstrapping or direct discarding. ③ **Length penalty** $R'=R-\alpha|\tau|$—incentivizes the agent to complete efficiently; the cost is potentially penalizing necessary long reasoning chains.
+
+**Follow-up:** After asynchronous execution introduces policy staleness, can PPO clipping alone solve the bias problem, or must it be combined with other mechanisms? → PPO clipping only truncates the IS ratio to control variance, it does not correct distribution bias—when the policy lag exceeds 1-2 mini-batches, gradients outside the clip interval are discarded, but updates within the interval are still made on the incorrect distribution. It must be combined with a small policy lag design (limiting asynchronous steps) or ESS monitoring (pausing or reducing lr when ESS falls below a threshold) to truly control bias.
+
+</details>
+
+<details class="qa"><summary>12. How does compounding error amplify in long trajectories? What is its relationship with exposure bias?</summary>
+
+Answer: Small errors at each turn's decision change subsequent observations, causing the trajectory to deviate from the training distribution. The next turn then makes an even larger error on this out-of-distribution state, leading to errors **amplifying exponentially** with turns. This is structurally identical to exposure bias in SFT—during training, the model sees ground-truth prefixes, but during inference, it sees prefixes generated by itself. Long-horizon agents are particularly severe because tool returns also depend on previous actions. Mitigation: RL itself alleviates exposure bias by training the model on its own rollouts. Curriculum learning (starting with short horizons) can reduce the initial speed of error accumulation. **DAgger (Dataset Aggregation)** requests expert labels for states generated by the current policy at each turn, continuously incorporating the distribution actually visited by the policy into training, directly combating distribution shift at the data level. However, even with online RL, distribution shift within long trajectories cannot be entirely eliminated theoretically: within each rollout, small errors in early steps **compound with interest** within the trajectory—subsequent steps make decisions on states that increasingly deviate from the training distribution. RL updates, while correcting against the seen rollouts, cannot "foresee" the subsequent snowball effect caused by early errors within the same batch of rollouts. This is the fundamental reason why long-horizon scenarios are more fragile to error accumulation than short-horizon ones.
+
+**Follow-up:** DAgger mitigates the static mismatch between training and inference distributions, but why is the compound interest of errors within a long trajectory (distribution shift within a rollout) something that even online RL cannot completely eliminate? → DAgger/online RL corrects the problem of "not having seen certain states during training." However, the compound interest within a trajectory stems from causal chains—the error at step $t$ changes $s_{t+1}$. When updating the policy, this rollout has already "happened," and only the next batch of rollouts can observe the effect of the correction. Errors still propagate within a single trajectory; the longer the horizon, the more opportunities for propagation. Online RL can only shorten this lag, not reduce it to zero.
 
 </details>
 
@@ -171,181 +195,181 @@ Answer: Small errors in each turn's decision alter subsequent observations, caus
 
 ## Deep-dive
 
-> Interview-trap-level questions: the following Q&A assumes the interviewer is already familiar with single-turn GRPO/PPO and is probing the fine-grained mechanisms in multi-turn settings. **Study notes, not the author's own research**.
+> Interview-trap level questions: The following Q&A assumes the interviewer is familiar with single-turn GRPO/PPO and asks about fine-grained mechanisms in multi-turn scenarios. **Study notes, not author's research findings**.
 
 ---
 
-### Q1. Per-token vs per-turn advantage estimation — how does GAE's discount transfer to multi-turn?
+### Q1. per-token vs per-turn advantage estimation — How does the discount in GAE transfer to multi-turn?
 
-**Core tension**: single-turn RL defines advantage at token granularity ($A_t = Q_t - V_t$); multi-turn settings have a two-level structure — **temporal discount across turns** (turn-level) and **token broadcasting** within a turn.
+**Core Contradiction**: Single-turn RL defines advantage at the token granularity ($A_t = Q_t - V_t$); multi-turn scenarios have a two-level structure — **temporal discounting** between turns (turn-level) and **token broadcasting** within a turn.
 
-**Transferring GAE**<span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">GAE uses λ-weighted TD residual sums to trade off bias-variance: λ→1 approaches Monte Carlo, λ→0 approaches single-step TD. <a href="https://arxiv.org/abs/1506.02438">Schulman 2015 ↗</a></span></span>:
+**GAE Transfer**<span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">GAE uses a λ-weighted sum of TD residuals to balance bias-variance: λ→1 approaches Monte Carlo, λ→0 approaches single-step TD.<a href="https://arxiv.org/abs/1506.02438">Schulman 2015 ↗</a></span></span>:
 
 $$\hat{A}_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{T-t}(\gamma\lambda)^l\,\delta_{t+l}, \quad \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t).$$
 
-Replacing "one token" with "one turn", the formula applies directly on the **turn-level MDP**:
-- $\gamma$ (turn discount): in sparse terminal reward settings, $\gamma\approx1$ (no discount) is common, since every turn has genuine contribution value; too low a $\gamma$ pushes early-turn advantages toward zero, wasting gradient signal.
-- $\lambda$ (GAE smoothing coefficient): controls bias-variance trade-off — critic bootstrap errors accumulate more easily in multi-turn episodes, so $\lambda<1$ is more critical than in single-turn settings; otherwise variance explodes exponentially with the horizon.
+Replacing "one token" with "one turn," this formula is fully applicable to a **turn-level MDP**:
+- $\gamma$ (turn discount): In sparse terminal reward scenarios, $\gamma\approx1$ is often set (no discounting), as each turn contributes actual value. A $\gamma$ that is too low will drive the advantage of early turns toward zero, wastefully discarding gradient signals.
+- $\lambda$ (GAE smoothing coefficient): Controls the bias-variance trade-off — critic bootstrapping error in multi-turn episodes accumulates more easily. In practice, $\lambda<1$ is more critical than in single-turn; otherwise variance explodes exponentially with horizon.
 
-**Broadcasting from turn-level to token-level**: all agent-generated tokens within a turn share that turn's $\hat{A}^{\text{turn}}$; observation tokens have mask=0. Per-token gradients thus equal the per-turn advantage multiplied by the action mask, with no additional approximation.
+**Broadcasting from turn-level to token-level**: All agent-generated tokens within the same turn share that turn's $\hat{A}^{\text{turn}}$. Observation tokens have mask=0. Thus, per-token gradients equal the per-turn advantage multiplied by the action-mask, with no additional approximation.
 
-**Interview trap**: "If tokens share the same advantage, what is the difference between token-level and turn-level?" — The difference lies in **which level computes discounts and baselines**: turn-level lets discounts span turns and allows the value function to bootstrap at turn granularity; token-level is purely where gradients land. Confusing the two leads to discount being applied at the wrong level (applying γ per token is equivalent to γ^t decay over a very long sequence, making early-token gradients nearly zero).
+**Interview Trap**: "Since tokens share the same advantage, what's the difference between token-level and turn-level?" — The difference lies in **which level calculates the discount and baseline**. Turn-level lets discounts span turns and allows the value function to bootstrap at the turn granularity. Token-level is simply where the gradients land. Confusing the two leads to incorrect application of discounts at the wrong level (applying γ discount to each token is equivalent to applying γ^t decay to a very long sequence, making early token gradients nearly zero).
 
 ---
 
-### Q2. High variance of the GRPO group baseline under a single terminal reward — why? What are variance-reduction techniques?
+### Q2. High variance in GRPO group baseline under single terminal rewards — Why? What are variance reduction techniques?
 
-**GRPO group baseline** advantage:
+**GRPO Group Baseline** advantage:
 
 $$A(\tau_i) = \frac{R(\tau_i) - \mu_g}{\sigma_g + \epsilon}, \quad \mu_g=\frac{1}{G}\sum_{j=1}^G R(\tau_j).$$
 
-**Two sources of variance explosion in multi-turn settings**:
+**Two sources of variance explosion in multi-turn scenarios**:
 
-1. **Binary 0/1 reward + small group size**: if $G=8$ and success rate $p\approx0.1$, the group commonly sees all zeros (8 failures) or only 1 success. When all zeros, $\sigma_g=0$ and advantage degenerates to zero; with 1/8 success, $\sigma_g$ is tiny and the advantage spikes — a single sample dominates the entire batch update.
-2. **Trajectory length variation**: the log-prob sum of a long trajectory is numerically much larger than that of a short one; if advantage is directly multiplied by the number of tokens, long trajectories naturally produce larger gradients, creating an implicit length bias.
+1. **Binary 0/1 reward + small group size**: If $G=8$ and success rate $p\approx0.1$, it's common for the group to have all zeros (8 failures) or only 1 success. For all zeros, $\sigma_g=0$, and the advantage degenerates to zero. For 1/8 successes, $\sigma_g$ is extremely small, causing a spike in advantage—a single sample dominates the entire batch update.
+2. **Trajectory length differences**: The log-prob sum for long trajectories is numerically much larger than for short trajectories. If the advantage is directly multiplied by the token count, long trajectories naturally have larger gradients, creating an implicit length bias.
 
-**Variance-reduction techniques**:
+**Variance Reduction Techniques**:
 
 | Technique | Mechanism | Cost |
 |---|---|---|
 | Increase group size $G$ | More stable $\mu_g,\sigma_g$ | Sampling cost $\times G$ |
-| Length-normalization | Divide loss by action token count | Balances short/long trajectories, but may penalize necessary long reasoning |
-| Mix ORM + sparse intermediate reward | Reduces probability of all-zero groups, increases positive signal | Intermediate rewards can be hacked |
-| Advantage clipping / quantile truncation | Remove spike-advantage samples | May discard high-information samples |
-| Introduce lightweight critic (turn-level value estimate) | Use $V$ to decompose terminal return into per-turn TD errors | Extra model; contradicts GRPO's "critic-free" premise |
+| Length-normalization | Divide loss by number of action tokens | Balances short/long trajectories, but may penalize necessary long reasoning |
+| Mix ORM + intermediate sparse rewards | Reduces probability of all-zero groups, increases positive signal | Intermediate rewards can be hacked |
+| Advantage clipping / truncation quantile | Remove peak advantage samples | May discard high-information samples |
+| Introduce lightweight critic (turn-level value estimation) | Use $V$ to decompose terminal return into per-turn TD errors | Extra model, contradicts GRPO's "critic-free" philosophy |
 
-**Interview trap**: "Can GRPO fully replace PPO's critic?" — In single-turn binary reward settings, yes. In long-horizon sparse reward settings, the group baseline's variance often exceeds the critic baseline's, and the value of a critic returns. In practice, the compromise is using a small turn-level value head rather than a full PPO critic.
+**Interview Trap**: "Can GRPO fully replace PPO's critic?" — Yes for single-turn binary reward scenarios. In long-horizon sparse reward scenarios, the variance of the group baseline is often greater than that of the critic baseline, making the critic valuable again. In practice, a compromise is to use a small turn-level value head instead of a full PPO critic.
 
 ---
 
-### Q3. Importance-sampling / off-policy correction when multi-turn rollouts go stale
+### Q3. Importance-sampling / off-policy correction after multi-turn rollouts become stale
 
-**Problem background**: agentic rollouts involve real tool calls (network, database, code execution) with latency up to seconds — by the time a rollout finishes, policy parameters have advanced several steps, $\pi_\theta \neq \pi_{\theta_\text{old}}$.
+**Problem Context**: Agentic rollouts involve real tool calls (networking, databases, code execution) with second-level latency. When a rollout completes, the policy parameters may have already updated several steps, so $\pi_\theta \neq \pi_{\theta_\text{old}}$.
 
-**Importance weight (IS weight)**:
+**Importance Weight (IS weight)**:
 
 $$w(\tau) = \frac{\pi_\theta(\tau)}{\pi_{\theta_\text{old}}(\tau)} = \prod_{t \in \text{agent tokens}} \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_\text{old}}(a_t|s_t)}.$$
 
-**Why the product is dangerous**: across $T$ turns, agent tokens can reach thousands; even with per-step ratio $\approx1.05$, the product can yield IS weights $\gg10$ — variance explodes and a tiny fraction of samples dominate the gradient.
+**Why continuous multiplication is dangerous**: In a T-turn trajectory, agent tokens can number in the thousands. Even if each step's ratio $\approx1.05$, after continuous multiplication, the IS weight can be $\gg10$ — variance explodes, and a tiny number of samples dominate the gradient.
 
-**Engineering corrections**:
+**Engineering Correction Methods**:
 
-1. **PPO clip**<a class="cite" href="#ref-5">5</a> ($\epsilon$ clip): truncate each token's ratio to $[1-\epsilon, 1+\epsilon]$; does not correct bias but effectively controls variance. Suitable for **synchronous training** where policy lag does not exceed 1–2 mini-batches.
-2. **Sequence-level truncated IS (TIS)**: truncate the entire trajectory's IS weight to some upper bound (e.g., 3.0); simple but biased.
-3. **Dynamically reduce learning rate using ESS**: monitor rollout staleness with effective sample size $\text{ESS}=(\sum w_i)^2/\sum w_i^2$; automatically reduce the learning rate when ESS falls below a threshold to avoid gradient shocks.
-4. **Prefix IS ratio**: the theoretically correct correction is the **prefix IS ratio** (prefix product of the full sequence) rather than independent per-token ratio truncation; but this is complex to implement and numerically unstable.
+1. **PPO clip**<a class="cite" href="#ref-5">5</a> ($\epsilon$ clip): Truncates each token's ratio to $[1-\epsilon, 1+\epsilon]$. Does not correct bias but effectively controls variance. Suitable for **synchronous training**, where policy lag does not exceed 1-2 mini-batches.
+2. **Sequence-level truncated IS (TIS)**: Truncates the entire trajectory's IS weight to an upper bound (e.g., 3.0). Simple but biased.
+3. **Use ESS to dynamically reduce learning rate**: Monitor rollout staleness using effective sample size $\text{ESS}=(\sum w_i)^2/\sum w_i^2$. Automatically reduce learning rate when ESS falls below a threshold to avoid gradient shocks.
+4. **Prefix IS ratio**: The theoretically correct correction term is the **prefix IS ratio** (the cumulative product over the entire sequence prefix), not independent truncation of per-token ratios. However, implementation is complex and numerically unstable.
 
-**Interview trap**: "Is PPO clip alone sufficient?" — In synchronous training, yes. In async / agentic settings, policy lag can reach dozens of steps, at which point clip only treats the symptom (variance reduced but bias is large), and in effect performs gradient updates on the wrong distribution — it must be paired with small policy-lag design or ESS monitoring.
+**Interview Trap**: "Is using PPO clip enough?" — Yes for synchronous training. In asynchronous/agentic scenarios, policy lag can be dozens of steps. At that point, clip only treats the symptom (reduces variance but bias is large), effectively performing gradients on the incorrect distribution. It must be combined with a small policy lag design or ESS monitoring.
 
 ---
 
-### Q4. Specific forms of long-horizon reward hacking and mitigations
+### Q4. Specific forms of long-horizon reward hacking and mitigation
 
-**"Long-horizon" makes hacking easier**: single-turn hacking only needs to find an exploit in one response; a long-horizon agent can slowly accumulate shortcuts over dozens of steps, overwrite evaluation files, or exploit tool side effects.
+**"Long-horizon" makes hacking easier**: Single-turn hacking only requires finding a loophole in one response. A long-horizon agent can slowly accumulate shortcuts over dozens of steps, cover evaluation files, or exploit tool side effects.
 
 **Three typical forms**:
 
 | Type | Mechanism | Example |
 |---|---|---|
-| **Idle looping** | Agent repeatedly calls irrelevant tools, extending the trajectory hoping to score on milestones | Repeatedly querying a search API without advancing the task |
-| **Premature stop** | Declaring "task complete" early to bypass subsequent difficult steps | Code agent outputs "DONE" before the test run |
-| **Milestone gaming** | Triggering milestone checkpoints without genuinely solving the subtask | Writing an empty function to make CI pass, or directly mocking test output |
+| **Idling/Looping** | Agent repeatedly calls irrelevant tools, lengthening the trajectory hoping to score via milestones | Repeatedly querying a search API without advancing the task |
+| **Premature Stop** | Declaring "task complete" early to bypass subsequent difficult steps | Code agent outputs "DONE" before running tests |
+| **Milestone Gaming** | Triggering milestone checkpoints without truly solving the subtask | Writing an empty function to pass CI, or directly mocking test outputs |
 
-**Why long-horizon is worse**: theoretical analysis<span class="cite-wrap"><a class="cite" id="fnref-7" href="#ref-7">7</a><span class="cite-note">Scaling Laws for Reward Model Overoptimization: as KL divergence increases, gold reward first rises then falls; the gap between proxy reward and gold reward increases monotonically with KL. <a href="https://arxiv.org/abs/2210.10760">Gao 2022 ↗</a></span></span> shows that the gap between proxy reward and gold reward increases monotonically with KL divergence — the longer the trajectory, the larger the total KL divergence, and per scaling laws [7] the hacking risk increases systematically.
+**Why it's more severe in long-horizons**: Theoretical analysis<span class="cite-wrap"><a class="cite" id="fnref-7" href="#ref-7">7</a><span class="cite-note">Scaling Laws for Reward Model Overoptimization: As KL divergence increases, gold reward first rises then falls; the difference between proxy reward and gold reward monotonically increases with KL.<a href="https://arxiv.org/abs/2210.10760">Gao 2022 ↗</a></span></span> shows that the difference between proxy reward and gold reward monotonically increases with KL divergence. The longer the trajectory, the greater the total KL divergence. According to the scaling law [7], hacking risk systematically increases.
 
-**Mitigation combination**:
+**Mitigation Combination**:
 
-1. **Terminal verifiable reward as primary**<a class="cite" href="#ref-4">4</a>: unit test pass / environment state achieved, harder to hack than neural-network proxy rewards;
-2. **Step / token cost penalty**: $R'(\tau) = R(\tau) - \alpha \cdot |\tau|$, directly suppresses looping;
-3. **Read-only observation tokens (loss mask)**: prevents the agent from learning to "generate output formats that pass mock checks";
-4. **KL penalty term**: $R' = R - \beta\,\text{KL}(\pi_\theta\|\pi_{\text{ref}})$, acts as a brake before proxy reward and gold reward begin to diverge;
-5. **Adversarial test-set rotation**: periodically replace evaluation samples to prevent the agent from memorizing shortcuts to specific test cases.
-
----
-
-### Q5. How does partial observability (POMDP) make value estimation harder?
-
-**Difference in information structure: single-turn RL vs long-horizon agentic RL**:
-
-Single-turn reasoning: $V(s) \approx V(\text{prompt})$ — the prompt is fully visible, and the value function receives complete input.
-
-Multi-turn agentic: $s_t$ = conversation history + last turn's tool return, but **next turn's tool return is unknown** — the agent operates in a POMDP, unaware of future observations.
-
-**Three specific challenges**:
-
-1. **Stochasticity of tool returns**: the same action (API call) may return different content due to network conditions or external DB version differences — the value function must take an expectation over this randomness, but during training only one specific return is observed. Single-step bootstrap ($V(s_{t+1})$) fits the value of a noisy observation, leading to slow convergence and hard-to-estimate bias.
-
-2. **Context length explosion**: as turns increase, $s_t$ grows linearly (full history concatenated); if the value network uses the same LM backbone, its forward-pass cost grows quadratically with context length — value bootstrapping itself becomes expensive.
-
-3. **Irreversibility of external state**: the agent has modified a database / filesystem, and these side effects are not in the token stream — the value function cannot see the "hidden state of the environment". Traditional POMDP solutions (belief states) cannot be directly applied in LLM settings.
-
-**Practical responses**:
-- Use a lightweight turn-level value head (attached to the hidden state of the last generated token) rather than a critic over the full rollout;
-- **Summarize** tool returns before feeding them into the value input to compress the context;
-- Accept higher bias: use GAE with $\lambda<1$ to reduce reliance on long-range bootstrapping, at the cost of slightly underestimating long-term advantage.
+1. **Focus on verifiable terminal rewards**<a class="cite" href="#ref-4">4</a>: Unit test pass / environment state achievement, harder to hack than neural network proxy rewards.
+2. **Step/token cost penalties**: $R'(\tau) = R(\tau) - \alpha \cdot |\tau|$, directly suppresses looping.
+3. **Observation token read-only (loss mask)**: Prevents the agent from learning to "generate output formats that pass mock checks".
+4. **KL penalty term**: $R' = R - \beta\,\text{KL}(\pi_\theta\|\pi_{\text{ref}})$, "brakes" before proxy reward and gold reward diverge.
+5. **Adversarial test set rotation**: Regularly change evaluation samples to prevent the agent from memorizing shortcuts for specific test cases.
 
 ---
 
-### Q6. Exploration under long-horizon sparse rewards
+### Q5. How does partial observability (POMDP) make value estimation difficult?
 
-**Why single-turn RL exploration strategies are insufficient for long-horizon**: in single-turn RL, randomly sampling tokens is sufficient for exploration; in multi-turn settings, **the probability of a successful trajectory decays exponentially with the number of turns** — if the per-turn correct probability is 0.8, after 10 turns the success rate drops to $0.8^{10}\approx 0.11$, the agent rarely sees positive rewards, and the training signal is nearly all zero.
+**Information structure difference between single-turn RL and long-horizon agentic RL**:
 
-**Three exploration strategies**:
+Single-turn reasoning: $V(s) \approx V(\text{prompt})$ — prompt is fully visible, value function input is complete.
 
-1. **Curriculum learning**: start from short horizons / easy subtasks and gradually increase difficulty. The key is ensuring positive rewards are frequent enough during early training to produce effective gradients. Cost: requires automatic difficulty labeling or hand-crafted curricula.
+Multi-turn agentic: $s_t$ = historical conversation + previous turn's tool return, but **the next turn's tool return is unknown** — the agent is in a POMDP, unaware of future observations.
 
-2. **Subgoal / milestone rewards (use with caution)**: give small rewards at intermediate steps to guide exploration direction. Problem: as discussed in Q4, milestones themselves can be gamed — must be paired with verifiable milestones (e.g., subtask unit tests pass) rather than neural network scores.
+**Three specific difficulties**:
 
-3. **Replay + prioritized experience replay**: retain a small number of historical successful trajectories and resample them with higher probability — allowing the model to consistently see "what success looks like" in an extremely sparse environment. Cost: introduces an off-policy problem (see Q3).
+1. **Randomness of tool returns**: The same action (API call) may return different content due to network state, external DB version differences — the value function needs to take expectation over this randomness, but during training, only one specific return is seen. Single-step bootstrapping ($V(s_{t+1})$) fits the value of a noisy observation, leading to slow convergence and hard-to-estimate bias.
 
-**Interview follow-up**: "If the task success rate is consistently <5%, can GRPO still be used?" — Practical experience: group size needs to be large enough to ensure at least 1 success within each group; otherwise the advantage for the entire group degenerates to all zeros, equivalent to wasted rollouts. In this case, it is recommended to warm-start with SFT (learning from a small number of successful trajectories) before switching to RL.
+2. **Context length explosion**: As turns increase, $s_t$ grows linearly (full history concatenation). If the value network uses the same LM backbone, its forward pass cost grows quadratically with context length — value bootstrapping itself becomes expensive.
+
+3. **Irreversibility of external state**: The agent modifies a database/filesystem, and these side effects are not in the token stream — the value function cannot see the "hidden state of the environment". Traditional POMDP solutions (belief state) cannot be directly applied in the LLM context.
+
+**Practical Responses**:
+- Use a lightweight turn-level value head (attached to the hidden state of the last generated token) instead of a critic for the entire rollout.
+- **Summarize** tool returns before feeding them into the value input to compress context.
+- Accept higher bias: Use GAE with $\lambda<1$ to reduce reliance on distant bootstrapping, at the cost of slightly underestimating long-term advantage.
+
+---
+
+### Q6. Exploration problem under long-horizon sparse rewards
+
+**Why single-turn RL exploration strategies are insufficient for long-horizons**: In single-turn RL, random token sampling can explore. In multi-turn scenarios, **the probability of success trajectories decays exponentially with turns** — if each turn's correct probability is 0.8, after 10 turns the success rate drops to $0.8^{10}\approx 0.11$. The agent rarely sees positive rewards, and the training signal is nearly all zeros.
+
+**Three types of exploration strategies**:
+
+1. **Curriculum learning**: Start with short horizons / easy subtasks, gradually increasing difficulty. The core is to ensure positive rewards are frequent enough early in training to generate effective gradients. Cost: Requires automatic labeling of task difficulty or manual curriculum design.
+
+2. **Subgoal / milestone rewards (use with caution)**: Give small rewards at intermediate steps to guide exploration. Problem: As noted in Q4, milestones themselves can be gamed — must be combined with verifiable milestones (e.g., passing unit tests for sub-functions) rather than neural network scoring.
+
+3. **Replay + Prioritized Experience Replay**: Retain a small number of historical success trajectories and resample them with higher probability — letting the model continually see "what is success" in extremely sparse environments. Cost: Introduces off-policy issues (see Q3).
+
+**Interview Follow-up**: "If the task success rate is always <5%, can GRPO still be used?" — Practical experience: Group size needs to be large enough to guarantee at least 1 success within the group; otherwise, the entire group's advantage degenerates to all zeros, equivalent to running rollouts for nothing. At this point, it is recommended to first use SFT warm-starting (learning from a small set of successful trajectories) before switching to RL.
 
 ---
 
 ### Q7. After masking observation tokens, which tokens actually receive advantage? PRM step-level credit vs pure ORM
 
-**Precisely answering "which tokens receive advantage"**:
+**Precise answer to "which tokens receive advantage"**:
 
-Consider a trajectory with the following token sequence:
+Suppose a trajectory contains the following token sequence:
 
 ```
 [system_prompt] [user_turn_1] [agent_think_1] [agent_act_1] [obs_1] [agent_think_2] [agent_act_2] [obs_2] … [agent_final]
 ```
 
-Tokens with action_mask=1: all `agent_think_*` + `agent_act_*` + `agent_final`.  
-Tokens with action_mask=0: `system_prompt`, `user_turn_*`, all `obs_*` (tool returns / environment observations).
+Tokens with action_mask=1: All `agent_think_*` + `agent_act_*` + `agent_final`.
+Tokens with action_mask=0: `system_prompt`, `user_turn_*`, all `obs_*` (tool returns/environment observations).
 
-**Advantage broadcasting rule**: if turn-level GAE is used, all mask=1 tokens within the same turn share that turn's $\hat{A}^{\text{turn}}$. The final gradient flows only to token positions with mask=1.
+**Advantage broadcasting rule**: If using turn-level GAE, then all mask=1 tokens within the same turn share that turn's $\hat{A}^{\text{turn}}$. The final gradient only flows to token positions with mask=1.
 
-**A common mistake**: if the agent's `<think>` block is treated as internal reasoning rather than an action (some implementations mask CoT), then `<think>` tokens have mask=0 and the gradient does not flow through the reasoning chain — training only "action selection" and not "reasoning quality". This is an implementation detail that interviews use to probe whether the candidate truly understands the semantics of masking.
+**A common pitfall**: If the agent's `<think>` block is treated as internal reasoning rather than an action (some implementations mask out CoT), then `<think>` tokens have mask=0, and the gradient does not flow through the reasoning chain — effectively training only "action selection" without training "reasoning quality". This is an implementation detail, tested in interviews to see if the semantics of masking are truly understood.
 
-**Credit granularity comparison: PRM (process reward) vs ORM (outcome reward)**<span class="cite-wrap"><a class="cite" id="fnref-8" href="#ref-8">8</a><span class="cite-note">Define PRM step-level reward as the step-level advantage (change in future success probability), which is theoretically equivalent to RL's Q-V difference, and must be estimated using an independent prover policy rather than the current policy. <a href="https://arxiv.org/abs/2410.08146">Setlur 2024 ↗</a></span></span>:
+**PRM (Process Reward) vs ORM (Outcome Reward) credit granularity comparison**<span class="cite-wrap"><a class="cite" id="fnref-8" href="#ref-8">8</a><span class="cite-note">Defining PRM's step-level reward as step-level advantage (change in future success probability) is theoretically equivalent to RL's Q-V difference and needs to be estimated using an independent prover policy, not the current policy.<a href="https://arxiv.org/abs/2410.08146">Setlur 2024 ↗</a></span></span>:
 
-| Dimension | ORM (terminal reward) | PRM (step-level reward) |
+| Dimension | ORM (Terminal Reward) | PRM (Step-level Reward) |
 |---|---|---|
-| Signal sparsity | One scalar per trajectory | One scalar per step |
-| Credit granularity | Trajectory-level → broadcast to tokens | Step-level → directly assigned to that step's tokens |
-| Annotation cost | Low (only final correctness) | High (requires per-step judgment or automatic rollout estimation) |
-| Hackability | Harder (terminal state is difficult to fake) | Easier (intermediate step scorer can be deceived) |
-| Relationship to GAE | GAE uses $V$ function to approximate step-level advantage | PRM directly provides step-level advantage estimates |
+| Signal Sparsity | One scalar per trajectory | One scalar per step |
+| Credit Granularity | trajectory-level → broadcast to token | step-level → directly assigned to step's tokens |
+| Annotation Cost | Low (only final correctness needed) | High (requires step-by-step judgment or automatic rollout estimation) |
+| Susceptibility to Hacking | Relatively hard (terminal state hard to fake) | Relatively easy (intermediate step scorer can be deceived) |
+| Relationship with GAE | GAE uses $V$ function to approximate step-level advantage | PRM directly provides step-level advantage estimates |
 
-**PRM's step-level advantage definition**: the theoretically cleanest PRM step-level reward is the "change in future success probability" brought by that step: $r_t^{\text{PRM}} = P(\text{success}|s_{t+1}) - P(\text{success}|s_t)$. This is definitionally equivalent to RL's advantage ($Q(s,a)-V(s)$)<span class="cite-wrap"><a class="cite" href="#ref-8">8</a><span class="cite-note">Define PRM step-level reward as the step-level advantage (change in future success probability), which is theoretically equivalent to RL's Q-V difference, and must be estimated using an independent prover policy rather than the current policy. <a href="https://arxiv.org/abs/2410.08146">Setlur 2024 ↗</a></span></span>. In practice, **Monte Carlo rollouts** are used to estimate $P(\text{success}|s_t)$, at the cost of requiring many rollouts per step.
+**PRM's step-level advantage definition**: Theoretically, the cleanest PRM step-level reward is the "change in future success probability" brought by that step: $r_t^{\text{PRM}} = P(\text{success}|s_{t+1}) - P(\text{success}|s_t)$. This is definitionally equivalent to RL's advantage ($Q(s,a)-V(s)$)<span class="cite-wrap"><a class="cite" href="#ref-8">8</a><span class="cite-note">Defining PRM's step-level reward as step-level advantage (change in future success probability) is theoretically equivalent to RL's Q-V difference and needs to be estimated using an independent prover policy, not the current policy.<a href="https://arxiv.org/abs/2410.08146">Setlur 2024 ↗</a></span></span>. In practice, **Monte Carlo rollout estimation** of $P(\text{success}|s_t)$ is used, at the cost of requiring numerous rollouts per step.
 
-**Interview trap**: "Does using PRM eliminate the need for discount $\gamma$?" — No. PRM provides **step-level rewards**, which still need to be accumulated into returns using discounting or GAE. PRM solves "how much reward each step should receive"; it does not solve "how to convert multi-step rewards into gradient signals for the current policy".
+**Interview Trap**: "If PRM is used, is the discount $\gamma$ no longer needed?" — Incorrect. PRM provides **step-level rewards**, which still need to be accumulated into a return using discounting or GAE. PRM solves "how much reward each step should get," not "how to convert multi-step rewards into gradient signals for the current policy."
 
 ---
 
 ## References
 
-> All are original sources for classic foundational methods, verified one by one (title + arXiv ID). Click superscripts to jump, click ↩ to return.
+> All are original sources of classic foundational methods, verified item by item (title + arXiv ID). Click the superscript to jump, click ↩ to return.
 
 <ol>
 <li id="ref-1">Yao et al. <em>ReAct: Synergizing Reasoning and Acting in Language Models</em>. ICLR 2023. <a href="https://arxiv.org/abs/2210.03629">arXiv:2210.03629</a> — think→act→observe paradigm. <a href="#fnref-1">↩</a></li>
-<li id="ref-2">Shao et al. <em>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</em>. 2024. <a href="https://arxiv.org/abs/2402.03300">arXiv:2402.03300</a> — GRPO: group-relative baseline, critic-free. <a href="#fnref-2">↩</a></li>
-<li id="ref-3">Lightman et al. <em>Let's Verify Step by Step</em>. 2023. <a href="https://arxiv.org/abs/2305.20050">arXiv:2305.20050</a> — process supervision / PRM (PRM800K). <a href="#fnref-3">↩</a></li>
-<li id="ref-4">Lambert et al. <em>Tülu 3: Pushing Frontiers in Open Language Model Post-Training</em>. 2024. <a href="https://arxiv.org/abs/2411.15124">arXiv:2411.15124</a> — RLVR: verifiable correctness as terminal reward. <a href="#fnref-4">↩</a></li>
+<li id="ref-2">Shao et al. <em>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</em>. 2024. <a href="https://arxiv.org/abs/2402.03300">arXiv:2402.03300</a> — GRPO: Group relative baseline, critic-free. <a href="#fnref-2">↩</a></li>
+<li id="ref-3">Lightman et al. <em>Let's Verify Step by Step</em>. 2023. <a href="https://arxiv.org/abs/2305.20050">arXiv:2305.20050</a> — Process supervision / PRM (PRM800K). <a href="#fnref-3">↩</a></li>
+<li id="ref-4">Lambert et al. <em>Tülu 3: Pushing Frontiers in Open Language Model Post-Training</em>. 2024. <a href="https://arxiv.org/abs/2411.15124">arXiv:2411.15124</a> — RLVR: Using verifiable correctness as terminal reward. <a href="#fnref-4">↩</a></li>
 <li id="ref-5">Schulman et al. <em>Proximal Policy Optimization Algorithms</em>. 2017. <a href="https://arxiv.org/abs/1707.06347">arXiv:1707.06347</a> — PPO (policy gradient baseline). <a href="#fnref-5">↩</a></li>
 <li id="ref-6">Schulman et al. <em>High-Dimensional Continuous Control Using Generalized Advantage Estimation</em>. ICLR 2016. <a href="https://arxiv.org/abs/1506.02438">arXiv:1506.02438</a> — GAE: λ-weighted TD residuals, bias-variance trade-off. <a href="#fnref-6">↩</a></li>
-<li id="ref-7">Gao et al. <em>Scaling Laws for Reward Model Overoptimization</em>. 2022. <a href="https://arxiv.org/abs/2210.10760">arXiv:2210.10760</a> — scaling laws for proxy vs gold reward as a function of KL divergence. <a href="#fnref-7">↩</a></li>
+<li id="ref-7">Gao et al. <em>Scaling Laws for Reward Model Overoptimization</em>. 2022. <a href="https://arxiv.org/abs/2210.10760">arXiv:2210.10760</a> — Scaling law of proxy vs gold reward with KL divergence. <a href="#fnref-7">↩</a></li>
 <li id="ref-8">Setlur et al. <em>Rewarding Progress: Scaling Automated Process Verifiers for LLM Reasoning</em>. 2024. <a href="https://arxiv.org/abs/2410.08146">arXiv:2410.08146</a> — PRM step-level advantage = change in future success probability, equivalent to Q-V difference. <a href="#fnref-8">↩</a></li>
 </ol>

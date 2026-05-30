@@ -256,11 +256,15 @@ class EWCTrainer:
 
 答:神经网络的参数是所有任务的**共享存储**,在新任务 $\mathcal{T}_2$ 上 SGD 时梯度不知道哪些权重对旧任务 $\mathcal{T}_1$ 重要,直接覆盖它们,导致旧任务性能骤降——这就是 catastrophic forgetting。关键原因是参数共享加上独立优化目标:新任务梯度对旧任务损失来说是"噪声"。
 
+**追问：** 从优化理论的角度看,catastrophic forgetting 的本质是什么? → 本质是新任务的梯度下降方向在旧任务的损失曲面上是上升方向——两个任务的最优参数区域在参数空间中不重叠,SGD 沿新任务梯度移动时同时破坏旧任务的局部极值,即多目标优化中的 Pareto 冲突在单一参数共享下的退化形式。
+
 </details>
 
 <details class="qa"><summary>2. stability-plasticity dilemma 是什么?给出一个直觉类比。</summary>
 
 答:网络需要同时具备 **plasticity(可塑性)**——接受新任务梯度更新,和 **stability(稳定性)**——保住旧任务表征;两者天然冲突。直觉类比:学一门新语言时大脑既要记住母语(stability)又要塑造新语言回路(plasticity),死记硬背新语言可能挤压母语的神经路径。
+
+**追问：** 三大方法族(正则化 / Replay / 参数隔离)在 stability-plasticity 轴上各偏向哪端?如何根据任务需求选择? → 正则化(EWC/SI)偏 stability:惩罚项约束参数偏离,plasticity 受限;Replay 居中:通过混入旧数据平衡两端,但 buffer 大小决定偏向;参数隔离(ProgNN/LoRA-CL)最偏 stability:旧参数完全冻结,新任务只扩展新容量。当任务间相关性高、正向迁移有价值时选 Replay;当任务独立且存储/隐私受限时选参数隔离。
 
 </details>
 
@@ -268,11 +272,15 @@ class EWCTrainer:
 
 答:EWC(Elastic Weight Consolidation)在新任务损失上加一个二次惩罚项 $\frac{\lambda}{2}\sum_i F_i(\theta_i - \theta_i^*)^2$,让"对旧任务重要的权重"尽量不变。Fisher 信息矩阵对角线 $F_i = \mathbb{E}[(\partial \log p_\theta / \partial \theta_i)^2]$ 衡量参数 $i$ 对旧任务的**重要性**——$F_i$ 越大则惩罚越强,该参数被"弹性"保护。
 
+**追问：** Fisher 信息矩阵对角线近似的主要局限是什么?有哪些改进的替代方案? → 对角近似忽略参数间协方差,当两个参数对旧任务损失有强耦合重要性时(如 attention 的 Q/K 权重),单独惩罚每个参数会低估真实曲率。改进方向包括:块对角近似(K-FAC,按层分块保留同层内协方差)、Kronecker 分解近似,以及 SI 的在线轨迹积分(用参数对损失下降的实际贡献替代 Fisher,避免事后重算)。
+
 </details>
 
 <details class="qa"><summary>4. LwF 和 EWC 都不存旧数据,它们防遗忘的机制有何不同?</summary>
 
 答:EWC 在**参数空间**施加约束——用 Fisher 惩罚让旧任务重要权重不偏离旧值;LwF(Learning without Forgetting)在**输出空间**施加约束——用旧模型在新任务数据上的 soft output 作蒸馏目标 $\mathcal{L}_{\text{KD}}$,让新模型保持旧模型的输出行为。LwF 无需重新计算重要性分数,但旧模型软目标质量随任务漂移而退化。
+
+**追问：** LwF 在什么情况下防遗忘效果会严重退化?如何缓解? → 当新旧任务输入分布差异极大时(如旧任务是图像分类、新任务是文本),旧模型对新任务数据的软输出趋于均匀分布或置信度极低,蒸馏信号质量接近随机——等同于没有约束。缓解方法:混合使用参数空间约束(EWC 惩罚重要权重)补充输出空间蒸馏;或仅在新旧任务输入空间有重叠的子集上计算 $\mathcal{L}_{\text{KD}}$,过滤低置信软目标。
 
 </details>
 
@@ -282,11 +290,15 @@ class EWCTrainer:
 
 答:GEM 对每个旧任务 $k$ 单独施加梯度约束 $\langle g, g_k\rangle \geq 0$,需求解含 $(K-1)$ 个不等式的 QP,时间复杂度 $\mathcal{O}(K^3)$。A-GEM 将所有旧任务约束合并为单一均值约束 $\langle g, g_{\text{ref}}\rangle \geq 0$,投影有闭合解,每步计算量从 $\mathcal{O}(K \cdot d)$ 降为 $\mathcal{O}(d)$,与任务数无关。
 
+**追问：** A-GEM 的均值约束在 buffer 采样噪声下稳定性如何?有哪些改进方向? → A-GEM 每步从 buffer 中随机采样估计 $g_{\text{ref}}$,高方差采样会使约束方向不稳定——某步估计的 $g_{\text{ref}}$ 与真实均值偏差大时,投影可能错误方向,引入额外遗忘噪声。改进方向包括:增大每步 buffer 采样量以降低方差;用动量平滑历史 $g_{\text{ref}}$(类似 EMA);以及 ER-ACE 等后续工作通过 asymmetric cross-entropy 绕开梯度投影整体框架。
+
 </details>
 
 <details class="qa"><summary>6. BWT 和 FWT 各衡量什么?一个模型 BWT 很负但 FWT 很正说明什么?</summary>
 
 答:BWT(Backward Transfer) $= \frac{1}{T-1}\sum_{j=1}^{T-1}(a_{T,j}-a_{j,j})$ 衡量遗忘程度,越负说明旧任务性能下降越严重。FWT(Forward Transfer) $= \frac{1}{T-1}\sum_{j=2}^{T}(a_{j-1,j}-b_j)$ 衡量旧任务对新任务的正向迁移,越正说明迁移越好。BWT 很负但 FWT 很正,说明该模型在新任务上利用了旧知识加速学习(迁移好),但同时严重覆盖了旧任务参数(遗忘严重)——典型的高可塑、低稳定模型。
+
+**追问：** 在评估 LLM 的持续学习能力时,直接使用 BWT 和 FWT 指标有哪些局限性? → LLM 任务边界模糊(SFT/DPO/RL 是软边界而非离散任务序列),难以构建明确的 $a_{i,j}$ 性能矩阵;LLM 的"能力"是多维的(推理/代码/安全),单一准确率无法捕捉能力干扰;此外 stability gap(D3)意味着任务末尾的快照低估了训练过程中的最坏遗忘情况——对部署安全性而言,峰值遗忘幅度比 BWT 更关键。
 
 </details>
 
@@ -294,11 +306,15 @@ class EWCTrainer:
 
 答:Progressive Neural Networks 每来一个新任务就新增一列独立网络,旧列参数完全冻结,新列通过 lateral connection 读取旧列激活 $h_k^{(\ell)} = f(W_k^{(\ell)} h_k^{(\ell-1)} + \sum_{j<k} U_{k,j}^{(\ell)} h_j^{(\ell-1)})$——旧列梯度路径被切断,遗忘在结构上不可能发生。代价是参数量随任务数线性增长。
 
+**追问：** LoRA-based CL 相比 Progressive Networks 如何缓解参数线性增长?两者零遗忘保证有何本质差异? → LoRA-CL 每任务只增加低秩矩阵 $\Delta W = BA$(秩 $r \ll d$),参数增量为 $\mathcal{O}(r \cdot d)$ 而非 $\mathcal{O}(d^2)$,可扩展性远优于整列扩展。但零遗忘保证的性质不同:ProgNN 靠冻结旧列在结构上隔绝梯度,是硬保证;LoRA-CL 靠主干冻结+低秩子空间分配,若不强制正交(如 O-LoRA)则不同任务 adapter 激活可能干扰——是软保证,依赖子空间重叠程度。
+
 </details>
 
 <details class="qa"><summary>8. LoRA-based CL 相比 EWC / replay 有什么优势?在 LLM post-training 链条里怎么用?</summary>
 
 答:LoRA-based CL 为每个任务增量添加一套低秩 adapter,主干冻结——参数量可控且对旧任务零梯度干扰,无需存旧数据也无需计算 Fisher。在 LLM post-training 链条(SFT → DPO → RL)中,每阶段冻结主干只更新一套 LoRA,将 alignment tax 限制在 adapter 层内,主干通用知识不被覆盖;测试时按 task-ID 路由到对应 adapter。
+
+**追问：** 在 LLM 中使用 LoRA-based CL,部署时管理多套 adapter 会带来哪些工程挑战?O-LoRA 的正交约束能否从根本上消除这一问题? → 工程挑战包括:需存储并按 task-ID 动态加载 adapter(增加推理延迟和内存调度复杂度)、batch 内混合任务时无法合并 adapter 权重、以及 Class-IL / continual pretraining 设定下 task-ID 未知时路由失效。O-LoRA 的正交约束仅解决 adapter 间激活干扰问题,不解决路由失效——在无 task-ID 场景下仍需额外机制(如 prototype 分类器或任务推断模块)才能确定使用哪套 adapter。
 
 </details>
 
@@ -308,11 +324,15 @@ class EWCTrainer:
 
 答:经典 Task-IL 有明确任务边界和任务 ID;LLM continual pretraining 无明确边界,领域语料持续流入,任务粒度模糊(通用能力与新领域大量重叠)。特有挑战包括:旧通用能力(数学推理、指令遵循)可能以难以检测的方式退化、新语料的分布偏移持续时间长、无法用标准 $a_{i,j}$ 矩阵量化遗忘,以及学习率 warm-up restart 和 replay 通用数据的比例难以调优。
 
+**追问：** 在无明确任务边界的 LLM continual pretraining 中,如何实时监控并诊断通用能力的退化? → 需设计一套"探针 benchmark 矩阵"(覆盖推理/代码/数学/指令遵循等维度),在训练过程中按固定步数间隔评测——相当于在 LLM 尺度实现 per-iteration 连续评估(参见 stability gap D3);同时结合梯度/激活漂移检测定位哪些层被新语料大幅改写,以便决定是否触发 replay 通用数据或调低学习率。代价是显著的额外计算开销,需在监控频率与训练效率间权衡。
+
 </details>
 
 <details class="qa"><summary>10. 序列对齐链条(SFT → DPO → RL)中的 alignment tax 本质上是什么 CL 问题?有哪些方案缓解?</summary>
 
 答:alignment tax 本质是序列 CL 中每一跳的遗忘税累积——每步对齐目标都是在前一步 checkpoint 上继续训练,新对齐目标的梯度覆盖前序已学行为。缓解方案：(1) **KL 约束**(PPO clip / DPO reference model)限制每步偏离幅度,其二阶展开等价于以 Fisher 为权重的 EWC；(2) **Replay 旧偏好数据**混入前序阶段样本；(3) **LoRA 每阶段独立 adapter** 将对齐行为局部化,主干不变。
+
+**追问：** PPO 中的 KL 惩罚项在数学上是隐式 EWC,但在实践中两者有哪些关键差异会影响防遗忘效果? → 三点关键差异:(1) **锚点动态性**:KL 约束锚定动态更新的 reference 策略 $\pi_{\text{ref}}$,每轮 RL 可能更新 reference;EWC 锚点 $\theta^*$ 是旧任务完成后的固定快照——动态锚点在长序列对齐中会导致"锚点漂移",防遗忘中心持续移动。(2) **约束全矩阵 vs. 对角近似**:KL 散度用完整 Fisher 矩阵,EWC 用对角近似——前者约束更精确但计算不显式。(3) **惩罚系数调节**:PPO 的 $\beta$ 需在探索与保守间动态平衡,过大导致策略不收敛;EWC 的 $\lambda$ 在任务固定后通常静态设置——动态对齐场景下 $\beta$ 的调优难度更高。
 
 </details>
 
@@ -320,11 +340,15 @@ class EWCTrainer:
 
 答:Empirical Fisher $F_i^{\text{emp}} = \mathbb{E}_{(x,y)\sim\mathcal{D}}[(\partial \log p_\theta(y|x)/\partial \theta_i)^2]$ 用数据集真实标签 $y$,只在模型完美拟合时与 true Fisher 等价。出问题的场景：模型对旧任务远未收敛时 $F^{\text{emp}}$ 估计噪声大、旧任务标签噪声高时方向被污染、多任务在线累积(online EWC)时早期误差持续传播、以及任务间分布差异极大时 diagonal 近似与 empirical 误差双重劣化——保护了错误方向。
 
+**追问：** 除了切换到 true Fisher,还有哪些结构性替代方案可以从根本上绕开 diagonal empirical Fisher 的局限? → 两类根本性替代:(1) **换掉重要性度量**:SI 用参数对损失下降的实际贡献积分 $\Omega_i \propto \int \frac{\partial \mathcal{L}}{\partial \theta_i} \dot\theta_i\, dt$ 替代 Fisher——不依赖标签且在线累积,规避 empirical/diagonal 双重误差;MAS 用输出梯度范数替代,无需任何标注。(2) **换掉二次惩罚整体框架**:PackNet / LoRA-CL 的参数隔离方案完全不需要估计重要性——旧任务参数被结构性冻结,重要性估计的精度问题从根本上消失。这说明 Fisher 估计的局限性是正则化范式的系统性问题,而非可无限改进的工程问题。
+
 </details>
 
 <details class="qa"><summary>12. Generative Replay 相比 experience replay 的优点和局限各是什么?在大模型时代是否更可行?</summary>
 
 答:Generative Replay 用生成模型(VAE/GAN)合成"伪旧数据"注入训练，**优点**是无需存储任何真实旧样本，天然解决隐私和存储约束。**局限**是生成质量瓶颈会随任务序列积累误差——生成模型本身也面临遗忘，合成数据与真实分布的偏差在长任务链上叠加。在大模型时代，LLM 本身的生成能力极强，用 LLM 合成旧任务数据的质量远高于小型 GAN——可行性显著提升，但生成成本高且合成数据仍可能与原始分布有系统偏差。
+
+**追问：** 在 LLM 的 Generative Replay 中，用模型自身作为生成器("self-replay")与用独立冻结旧模型作为生成器相比，各有什么核心问题? → Self-replay(让当前模型生成旧任务数据再训练自身)存在**自我强化偏差**:模型在新任务训练后已有一定遗忘,生成的旧任务样本本身质量下降,再用这些样本训练会强化遗忘——形成负反馈循环。用**独立冻结旧模型**作为生成器(类似 LwF 的 teacher)可保证生成质量不随当前模型退化,但需额外存储一份完整模型副本,存储开销与 experience replay 的 buffer 相比可能更高;且冻结旧模型自身也不能随新数据分布更新,在长任务链上累积分布偏差。
 
 </details>
 
