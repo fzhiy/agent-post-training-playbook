@@ -150,6 +150,18 @@
 <h2 id="sec-0">0. The evolution</h2>
 <p><code>IID one-shot training</code> → <code>sequential multi-task (Task 1 → Task 2 → …)</code> → <strong><code>catastrophic forgetting appears</code></strong>: gradients directly overwrite old weights.</p>
 <p><strong>Stability-plasticity dilemma</strong>: a network must be <strong>plastic</strong> — accepting gradient updates for new tasks — and <strong>stable</strong> — preserving representations of old tasks. The two requirements are inherently in tension.</p>
+<p><strong>TL;DR — quick anchors (2-minute pass)</strong></p>
+<ul>
+<li><strong>Core tension = stability-plasticity</strong>: plastic (learn new) vs. stable (keep old) inherently conflict; catastrophic forgetting = new-task gradients <strong>overwriting</strong> shared parameters, not a capacity shortfall.</li>
+<li><strong>Four settings</strong>: Task-IL / Domain-IL / Class-IL (hardest) / Continual pretraining (no boundaries); difficulty hinges on whether the task ID is known at test time.</li>
+<li><strong>Three method families</strong>: regularization (EWC/SI/MAS, penalize moving important weights) / replay (ER/GEM/A-GEM/DER, mix old samples or soft targets) / parameter isolation (ProgNN/PackNet/LoRA-CL, separate sub-networks).</li>
+<li><strong>Parameter isolation (esp. ProgNN/PackNet) gives structural zero-forgetting</strong>; regularization / replay are merely <strong>approximate</strong>; isolation&#39;s cost is parameter growth with task count.</li>
+<li><strong>EWC</strong>: <code>L + (λ/2)·Σ Fᵢ(θᵢ−θᵢ*)²</code>, Fisher diagonal measures old-task importance; λ too small still forgets, too large can&#39;t learn the new task.</li>
+<li><strong>LwF = distilling the old model&#39;s soft outputs</strong>, no old data needed; but soft-target quality drops under large task drift.</li>
+<li><strong>Three metrics</strong>: AA (overall retention) / BWT (forgetting, <strong>signed, ideal ≥0</strong>) / FWT (forward transfer); don&#39;t read BWT as &quot;larger magnitude is better.&quot;</li>
+<li><strong>LLM angle</strong>: continual pretrain / instruction-tuning / alignment; <code>pretrain→SFT→DPO→RL</code> is CL at every hop, alignment tax <strong>accumulates</strong>; KL constraint ≈ implicit EWC.</li>
+<li><strong>Knowledge editing (ROME rank-1 / MEMIT batch) = targeted surgery</strong>, complementary to CL&#39;s global protection; sequential edits cause interference—judge on reliability / generalization / locality.</li>
+</ul>
 <h2 id="sec-1">1. Why catastrophic forgetting happens</h2>
 <p>A neural network&#39;s parameters are <strong>shared storage</strong> for all tasks. When running SGD on task <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">T</mi><mn>2</mn></msub></mrow><annotation encoding="application/x-tex">\mathcal{T}_2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.2542em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.2542em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span>, the gradient of the loss with respect to the parameters has no knowledge that &quot;these weights matter for <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">T</mi><mn>1</mn></msub></mrow><annotation encoding="application/x-tex">\mathcal{T}_1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.2542em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.2542em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span>&quot;, so it overwrites them — this is <strong>catastrophic forgetting</strong>.</p>
 <p>Classic settings:</p>
@@ -182,6 +194,9 @@
 <td>No</td>
 </tr>
 </tbody></table>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;Catastrophic forgetting is the model &#39;not remembering&#39; / lacking capacity.&quot; The root cause is <strong>interference</strong>, not capacity—network parameters are <strong>shared storage for all tasks</strong>, and a new task&#39;s SGD gradient doesn&#39;t know &quot;which weights matter for old tasks,&quot; so it simply <strong>overwrites</strong> them. So <strong>scaling the model up alone doesn&#39;t solve it</strong>—you protect important weights / replay the old distribution / isolate sub-networks.</p>
+</div>
 <h2 id="sec-2">2. Three method families</h2>
 <h3 id="sec-3">2.1 Regularization</h3>
 <p><strong>Core idea</strong>: add a <strong>penalty that protects old weights</strong> to the new-task loss, so that weights important to old tasks change as little as possible.</p>
@@ -292,6 +307,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <td>No</td>
 </tr>
 </tbody></table>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;Regularization methods like EWC fully prevent forgetting.&quot; Regularization and replay only give <strong>approximate</strong> zero-forgetting (soft constraint / sampled mixing): EWC&#39;s λ too small still forgets, too large can&#39;t learn the new task. Truly <strong>structural</strong> zero-forgetting comes only from parameter isolation (ProgNN freezing old columns / PackNet masks), at the cost of parameter growth with task count.</p>
+</div>
 <h2 id="sec-6">3. Knowledge Distillation: LwF</h2>
 <p><strong>LwF (Learning without Forgetting)</strong><span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">When training on a new task, uses the soft outputs of the old model as distillation targets, mitigating forgetting without storing any old data. <a href="https://arxiv.org/abs/1606.09282">Li 2016 ↗</a></span></span>:</p>
 <ul>
@@ -340,6 +358,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <blockquote>
 <p><strong>Forgetting</strong> is sometimes defined directly as the mean accuracy drop for each task from &quot;when learned&quot; to &quot;final&quot;, which is the negation of BWT.</p>
 </blockquote>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;Larger BWT magnitude is better.&quot; BWT is a <strong>signed</strong> metric: negative means forgetting, more negative is worse, and the ideal is <strong>≥0 or close to 0</strong> (positive = old tasks are even reinforced by later ones). When reading CL papers, don&#39;t treat &quot;large BWT&quot; as good—check its sign and how close it is to 0.</p>
+</div>
 <h2 id="sec-8">5. The LLM Angle</h2>
 <h3 id="sec-9">5.1 Continual Pretraining</h3>
 <p>Continuing to train a language model on new-domain corpora after initial pretraining (e.g., medical text, code updates); core challenges:</p>
@@ -364,6 +385,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <li><strong>Replay old preference data</strong> — mix in data from earlier alignment stages</li>
 <li><strong>LoRA with independent adapter per stage</strong> — backbone unchanged, alignment behavior localized</li>
 </ol>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;The alignment chain <code>SFT→DPO→RL</code> has independent steps.&quot; Each hop continues training on the previous hop&#39;s checkpoint—itself a CL problem: alignment tax <strong>accumulates hop by hop</strong> (over-SFT compresses diversity; RLHF after DPO can cause over-refusal / format degradation). This is also why the KL constraint (PPO clip / DPO reference model) is essentially an implicit analog of EWC.</p>
+</div>
 <h3 id="sec-12">5.4 Why CL Matters for LLM Post-Training</h3>
 <table>
 <thead>
@@ -396,6 +420,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <p>whose closed-form solution is a <strong>rank-1 update</strong> to <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>W</mi></mrow><annotation encoding="application/x-tex">W</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">W</span></span></span></span>—preserving existing associations <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mtext> ⁣</mtext><mo>→</mo><mtext> ⁣</mtext><mi>V</mi></mrow><annotation encoding="application/x-tex">K\!\to\!V</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="mspace" style="margin-right:-0.1667em;"></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">→</span><span class="mspace" style="margin-right:-0.1667em;"></span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.2222em;">V</span></span></span></span> while mapping the target subject&#39;s key to the new object.</p>
 <p><strong>MEMIT (Mass-Editing Memory in a Transformer)</strong><span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">Extends ROME&#39;s single edit to batches of thousands of facts updated across multiple middle layers. <a href="https://arxiv.org/abs/2210.07229">Meng 2022 ↗</a></span></span>: extends ROME&#39;s single edit to <strong>batches of thousands of facts</strong>, amortizing the update across multiple middle layers, resolving the degradation ROME suffers when editing many facts sequentially one by one.</p>
 <p><strong>Forgetting under sequential edits</strong>: when editing many facts in sequence, later edits interfere with earlier ones (edit interference) and may spill over to unrelated knowledge and general capabilities—exactly catastrophic forgetting reappearing in the &quot;editing&quot; paradigm. Edit quality is therefore measured on three axes simultaneously: <strong>reliability</strong> (the target fact is corrected), <strong>generalization</strong> (paraphrases / synonymous rewordings also take effect), and <strong>locality / specificity</strong> (unrelated knowledge is untouched). These three trade off against one another, isomorphic to stability-plasticity.</p>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;ROME/MEMIT edits one fact, and that&#39;s it—no effect on anything else.&quot; Editing many facts in sequence causes <strong>edit interference</strong>, and may spill over to unrelated knowledge and general capabilities—exactly catastrophic forgetting reappearing in the &quot;editing&quot; paradigm. So edit quality must be judged on three axes at once: reliability (corrected), generalization (paraphrases/synonyms also take effect), locality (unrelated knowledge untouched), which trade off against each other.</p>
+</div>
 <h2 id="sec-14">6. From-scratch EWC</h2>
 <details class="code-fold"><summary>71 行 / lines</summary><pre><code class="hljs language-python"><span class="hljs-keyword">import</span> torch
 <span class="hljs-keyword">import</span> torch.nn.functional <span class="hljs-keyword">as</span> F

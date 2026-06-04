@@ -10,6 +10,18 @@
 
 **stability-plasticity dilemma**:网络既要**可塑(plasticity)**——接受新任务的梯度更新;又要**稳定(stability)**——保住旧任务的表征。两者天然冲突。
 
+**TL;DR 速查(2 分钟过一遍)**
+
+- **核心矛盾 = stability-plasticity**:可塑(学新)与稳定(保旧)天然冲突;灾难性遗忘 = 新任务梯度**覆盖**共享参数,而非容量不足。
+- **四种设定**:Task-IL / Domain-IL / Class-IL(最难)/ Continual pretraining(无边界);难度看测试时是否知道任务 ID。
+- **三大方法族**:正则化(EWC/SI/MAS,惩罚动重要权重)/ 回放(ER/GEM/A-GEM/DER,混旧样本或软目标)/ 参数隔离(ProgNN/PackNet/LoRA-CL,不同子网)。
+- **参数隔离(尤其 ProgNN/PackNet)才结构性零遗忘**;正则化 / 回放都只是**近似**;隔离的代价是参数随任务数增长。
+- **EWC**:`L + (λ/2)·Σ Fᵢ(θᵢ−θᵢ*)²`,Fisher 对角衡量旧任务重要性;λ 太小仍遗忘、太大新任务学不动。
+- **LwF = 蒸馏旧模型软输出**,无需旧数据;但任务漂移大时软目标质量下降。
+- **三指标**:AA(整体保留)/ BWT(遗忘,**带符号、理想 ≥0**)/ FWT(正向迁移);别把 BWT 当「绝对值越大越好」。
+- **LLM 视角**:continual pretrain / instruction-tuning / alignment;`pretrain→SFT→DPO→RL` 每跳都是 CL,alignment tax **累积**;KL 约束 ≈ 隐式 EWC。
+- **知识编辑(ROME rank-1 / MEMIT 批量)= 定向手术**,与 CL 的全局保护互补;顺序编辑有 interference,看 reliability / generalization / locality 三轴。
+
 ## 1. 为什么会遗忘 / Why catastrophic forgetting happens
 
 神经网络的参数是所有任务的**共享存储**。在任务 $\mathcal{T}_2$ 上做 SGD 时,损失对参数的梯度不知道"这些权重对 $\mathcal{T}_1$ 很重要",于是把它们覆盖掉——这就是 **catastrophic forgetting**。
@@ -22,6 +34,8 @@
 | Domain-IL | 测试时未知 | 是 |
 | Class-IL(最难) | 测试时未知 | 是 |
 | Continual pretraining | 无明确边界 | 否 |
+
+> ❌ **误区:** 「灾难性遗忘是模型『记不住 / 容量不够』」。根因是**干扰**而非容量——网络参数是**所有任务的共享存储**,新任务的 SGD 梯度并不知道「哪些权重对旧任务重要」,于是直接把它们**覆盖**掉。所以**单靠把模型加大并不能解决**,得保护重要权重 / 回放旧分布 / 隔离子网。
 
 ## 2. 三大方法族 / Three method families
 
@@ -92,6 +106,8 @@ $$h_k^{(\ell)} = f\!\left(W_k^{(\ell)} h_k^{(\ell-1)} + \sum_{j<k} U_{k,j}^{(\el
 | Replay(ER/GEM/A-GEM/DER) | 近似 | 有 | buffer | 是(部分) |
 | 参数隔离(ProgNN/PackNet/LoRA-CL) | 是 | 有限~有 | 线性~轻量 | 否 |
 
+> ❌ **误区:** 「EWC 这类正则化方法能彻底防遗忘」。正则化与回放都只是**近似零遗忘**(软约束 / 抽样混合):EWC 的 λ 太小仍遗忘、太大新任务学不动。真正**结构性零遗忘**只有参数隔离(ProgNN 冻结旧列 / PackNet 掩码),代价是参数随任务数增长。
+
 ## 3. 知识蒸馏路线 / Knowledge Distillation: LwF
 
 **LwF(Learning without Forgetting)**<span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">训练新任务时,把旧模型的软输出作为蒸馏目标,不需要存储任何旧数据就能缓解遗忘。<a href="https://arxiv.org/abs/1606.09282">Li 2016 ↗</a></span></span>:
@@ -132,6 +148,8 @@ $$\text{FWT} = \frac{1}{T-1} \sum_{j=2}^{T} \bigl(a_{j-1,j} - b_j\bigr)$$
 
 > **Forgetting** 有时直接定义为每个任务"学完时 vs. 最终"的准确率下降均值,与 BWT 互为正负。
 
+> ❌ **误区:** 「BWT 绝对值越大越好」。BWT 是**带符号**指标:负值表示遗忘、越负越糟,理想是 **≥0 或接近 0**(正值 = 旧任务还被后续任务反哺)。读 CL 论文时别把「BWT 大」当好——要看它是正是负、离 0 多近。
+
 ## 5. LLM 视角 / The LLM Angle
 
 ### 5.1 Continual Pretraining
@@ -162,6 +180,8 @@ $$\text{FWT} = \frac{1}{T-1} \sum_{j=2}^{T} \bigl(a_{j-1,j} - b_j\bigr)$$
 2. **Replay 旧偏好数据**——混入前序对齐阶段的数据
 3. **LoRA 每阶段独立 adapter**——主干不动,对齐行为局部化
 
+> ❌ **误区:** 「对齐链条 `SFT→DPO→RL` 每一步互不影响」。每一跳都是在前一跳 checkpoint 上继续训练,本身就是一个 CL 问题:alignment tax **逐跳累积**(SFT 过度压缩多样性、DPO 后再 RLHF 可能 over-refusal / 格式退化)。这也是为什么 KL 约束(PPO clip / DPO 参考模型)本质 = EWC 的隐式类比。
+
 ### 5.4 为什么 CL 对 LLM post-training 重要
 
 | 场景 | CL 挑战 |
@@ -184,6 +204,8 @@ $$\hat{W} = \arg\min_{\hat W}\ \lVert \hat W K - V \rVert^2 \quad \text{s.t.}\ \
 **MEMIT(Mass-Editing Memory in a Transformer)**<span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">把 ROME 的单条编辑扩展到跨多个中间层、成批数千条事实的批量更新。<a href="https://arxiv.org/abs/2210.07229">Meng 2022 ↗</a></span></span>:把 ROME 的单条编辑扩展到**成批数千条事实**,跨多个中间层分摊更新,解决 ROME 顺序逐条编辑大量事实时的退化。
 
 **顺序编辑的遗忘**:连续编辑多条事实时,后续编辑会干扰先前编辑(edit interference),并可能波及无关知识与通用能力——这正是 CL 的灾难性遗忘在"编辑"范式下的再现。因此编辑质量要同时看三轴:**reliability**(目标事实改对)、**generalization**(对释义/同义改写同样生效)、**locality / specificity**(无关知识不被波及)。三者间存在权衡,与 stability-plasticity 同构。
+
+> ❌ **误区:** 「ROME/MEMIT 改一条事实,改完就完、不影响别的」。顺序编辑多条会**互相干扰(edit interference)**,还可能波及无关知识与通用能力——正是灾难性遗忘在「编辑」范式下的再现。所以编辑质量要同时看三轴:reliability(改对)/ generalization(释义同义也生效)/ locality(无关知识不被波及),三者间存在权衡。
 
 ## 6. 从零实现:EWC 二次惩罚 / From-scratch EWC
 

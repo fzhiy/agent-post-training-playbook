@@ -10,6 +10,18 @@
 
 **Stability-plasticity dilemma**: a network must be **plastic** — accepting gradient updates for new tasks — and **stable** — preserving representations of old tasks. The two requirements are inherently in tension.
 
+**TL;DR — quick anchors (2-minute pass)**
+
+- **Core tension = stability-plasticity**: plastic (learn new) vs. stable (keep old) inherently conflict; catastrophic forgetting = new-task gradients **overwriting** shared parameters, not a capacity shortfall.
+- **Four settings**: Task-IL / Domain-IL / Class-IL (hardest) / Continual pretraining (no boundaries); difficulty hinges on whether the task ID is known at test time.
+- **Three method families**: regularization (EWC/SI/MAS, penalize moving important weights) / replay (ER/GEM/A-GEM/DER, mix old samples or soft targets) / parameter isolation (ProgNN/PackNet/LoRA-CL, separate sub-networks).
+- **Parameter isolation (esp. ProgNN/PackNet) gives structural zero-forgetting**; regularization / replay are merely **approximate**; isolation's cost is parameter growth with task count.
+- **EWC**: `L + (λ/2)·Σ Fᵢ(θᵢ−θᵢ*)²`, Fisher diagonal measures old-task importance; λ too small still forgets, too large can't learn the new task.
+- **LwF = distilling the old model's soft outputs**, no old data needed; but soft-target quality drops under large task drift.
+- **Three metrics**: AA (overall retention) / BWT (forgetting, **signed, ideal ≥0**) / FWT (forward transfer); don't read BWT as "larger magnitude is better."
+- **LLM angle**: continual pretrain / instruction-tuning / alignment; `pretrain→SFT→DPO→RL` is CL at every hop, alignment tax **accumulates**; KL constraint ≈ implicit EWC.
+- **Knowledge editing (ROME rank-1 / MEMIT batch) = targeted surgery**, complementary to CL's global protection; sequential edits cause interference—judge on reliability / generalization / locality.
+
 ## 1. Why catastrophic forgetting happens
 
 A neural network's parameters are **shared storage** for all tasks. When running SGD on task $\mathcal{T}_2$, the gradient of the loss with respect to the parameters has no knowledge that "these weights matter for $\mathcal{T}_1$", so it overwrites them — this is **catastrophic forgetting**.
@@ -22,6 +34,8 @@ Classic settings:
 | Domain-IL | No | Yes |
 | Class-IL (hardest) | No | Yes |
 | Continual pretraining | No explicit boundary | No |
+
+> ❌ **Misconception:** "Catastrophic forgetting is the model 'not remembering' / lacking capacity." The root cause is **interference**, not capacity—network parameters are **shared storage for all tasks**, and a new task's SGD gradient doesn't know "which weights matter for old tasks," so it simply **overwrites** them. So **scaling the model up alone doesn't solve it**—you protect important weights / replay the old distribution / isolate sub-networks.
 
 ## 2. Three method families
 
@@ -92,6 +106,8 @@ $$h_k^{(\ell)} = f\!\left(W_k^{(\ell)} h_k^{(\ell-1)} + \sum_{j<k} U_{k,j}^{(\el
 | Replay (ER/GEM/A-GEM/DER) | Approximate | Yes | Buffer | Yes (partial) |
 | Parameter isolation (ProgNN/PackNet/LoRA-CL) | Yes | Limited–yes | Linear–lightweight | No |
 
+> ❌ **Misconception:** "Regularization methods like EWC fully prevent forgetting." Regularization and replay only give **approximate** zero-forgetting (soft constraint / sampled mixing): EWC's λ too small still forgets, too large can't learn the new task. Truly **structural** zero-forgetting comes only from parameter isolation (ProgNN freezing old columns / PackNet masks), at the cost of parameter growth with task count.
+
 ## 3. Knowledge Distillation: LwF
 
 **LwF (Learning without Forgetting)**<span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">When training on a new task, uses the soft outputs of the old model as distillation targets, mitigating forgetting without storing any old data. <a href="https://arxiv.org/abs/1606.09282">Li 2016 ↗</a></span></span>:
@@ -132,6 +148,8 @@ where $b_j$ is the baseline accuracy for task $j$ trained independently from ran
 
 > **Forgetting** is sometimes defined directly as the mean accuracy drop for each task from "when learned" to "final", which is the negation of BWT.
 
+> ❌ **Misconception:** "Larger BWT magnitude is better." BWT is a **signed** metric: negative means forgetting, more negative is worse, and the ideal is **≥0 or close to 0** (positive = old tasks are even reinforced by later ones). When reading CL papers, don't treat "large BWT" as good—check its sign and how close it is to 0.
+
 ## 5. The LLM Angle
 
 ### 5.1 Continual Pretraining
@@ -162,6 +180,8 @@ Sequentially introducing new instruction types (e.g., coding → then math → t
 2. **Replay old preference data** — mix in data from earlier alignment stages
 3. **LoRA with independent adapter per stage** — backbone unchanged, alignment behavior localized
 
+> ❌ **Misconception:** "The alignment chain `SFT→DPO→RL` has independent steps." Each hop continues training on the previous hop's checkpoint—itself a CL problem: alignment tax **accumulates hop by hop** (over-SFT compresses diversity; RLHF after DPO can cause over-refusal / format degradation). This is also why the KL constraint (PPO clip / DPO reference model) is essentially an implicit analog of EWC.
+
 ### 5.4 Why CL Matters for LLM Post-Training
 
 | Scenario | CL challenge |
@@ -184,6 +204,8 @@ whose closed-form solution is a **rank-1 update** to $W$—preserving existing a
 **MEMIT (Mass-Editing Memory in a Transformer)**<span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">Extends ROME's single edit to batches of thousands of facts updated across multiple middle layers. <a href="https://arxiv.org/abs/2210.07229">Meng 2022 ↗</a></span></span>: extends ROME's single edit to **batches of thousands of facts**, amortizing the update across multiple middle layers, resolving the degradation ROME suffers when editing many facts sequentially one by one.
 
 **Forgetting under sequential edits**: when editing many facts in sequence, later edits interfere with earlier ones (edit interference) and may spill over to unrelated knowledge and general capabilities—exactly catastrophic forgetting reappearing in the "editing" paradigm. Edit quality is therefore measured on three axes simultaneously: **reliability** (the target fact is corrected), **generalization** (paraphrases / synonymous rewordings also take effect), and **locality / specificity** (unrelated knowledge is untouched). These three trade off against one another, isomorphic to stability-plasticity.
+
+> ❌ **Misconception:** "ROME/MEMIT edits one fact, and that's it—no effect on anything else." Editing many facts in sequence causes **edit interference**, and may spill over to unrelated knowledge and general capabilities—exactly catastrophic forgetting reappearing in the "editing" paradigm. So edit quality must be judged on three axes at once: reliability (corrected), generalization (paraphrases/synonyms also take effect), locality (unrelated knowledge untouched), which trade off against each other.
 
 ## 6. From-scratch EWC
 

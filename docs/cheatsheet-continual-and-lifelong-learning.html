@@ -150,6 +150,18 @@
 <h2 id="sec-0">0. 一句话演化 / The evolution</h2>
 <p><code>IID 一次性训练</code> → <code>序列多任务(任务 1 → 任务 2 → …)</code> → <strong><code>灾难性遗忘出现</code></strong>:梯度直接覆盖旧权重。</p>
 <p><strong>stability-plasticity dilemma</strong>:网络既要<strong>可塑(plasticity)</strong>——接受新任务的梯度更新;又要<strong>稳定(stability)</strong>——保住旧任务的表征。两者天然冲突。</p>
+<p><strong>TL;DR 速查(2 分钟过一遍)</strong></p>
+<ul>
+<li><strong>核心矛盾 = stability-plasticity</strong>:可塑(学新)与稳定(保旧)天然冲突;灾难性遗忘 = 新任务梯度<strong>覆盖</strong>共享参数,而非容量不足。</li>
+<li><strong>四种设定</strong>:Task-IL / Domain-IL / Class-IL(最难)/ Continual pretraining(无边界);难度看测试时是否知道任务 ID。</li>
+<li><strong>三大方法族</strong>:正则化(EWC/SI/MAS,惩罚动重要权重)/ 回放(ER/GEM/A-GEM/DER,混旧样本或软目标)/ 参数隔离(ProgNN/PackNet/LoRA-CL,不同子网)。</li>
+<li><strong>参数隔离(尤其 ProgNN/PackNet)才结构性零遗忘</strong>;正则化 / 回放都只是<strong>近似</strong>;隔离的代价是参数随任务数增长。</li>
+<li><strong>EWC</strong>:<code>L + (λ/2)·Σ Fᵢ(θᵢ−θᵢ*)²</code>,Fisher 对角衡量旧任务重要性;λ 太小仍遗忘、太大新任务学不动。</li>
+<li><strong>LwF = 蒸馏旧模型软输出</strong>,无需旧数据;但任务漂移大时软目标质量下降。</li>
+<li><strong>三指标</strong>:AA(整体保留)/ BWT(遗忘,<strong>带符号、理想 ≥0</strong>)/ FWT(正向迁移);别把 BWT 当「绝对值越大越好」。</li>
+<li><strong>LLM 视角</strong>:continual pretrain / instruction-tuning / alignment;<code>pretrain→SFT→DPO→RL</code> 每跳都是 CL,alignment tax <strong>累积</strong>;KL 约束 ≈ 隐式 EWC。</li>
+<li><strong>知识编辑(ROME rank-1 / MEMIT 批量)= 定向手术</strong>,与 CL 的全局保护互补;顺序编辑有 interference,看 reliability / generalization / locality 三轴。</li>
+</ul>
 <h2 id="sec-1">1. 为什么会遗忘 / Why catastrophic forgetting happens</h2>
 <p>神经网络的参数是所有任务的<strong>共享存储</strong>。在任务 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">T</mi><mn>2</mn></msub></mrow><annotation encoding="application/x-tex">\mathcal{T}_2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.2542em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.2542em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span> 上做 SGD 时,损失对参数的梯度不知道&quot;这些权重对 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">T</mi><mn>1</mn></msub></mrow><annotation encoding="application/x-tex">\mathcal{T}_1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.2542em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.2542em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span> 很重要&quot;,于是把它们覆盖掉——这就是 <strong>catastrophic forgetting</strong>。</p>
 <p>经典设定:</p>
@@ -182,6 +194,9 @@
 <td>否</td>
 </tr>
 </tbody></table>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>误区:</strong> 「灾难性遗忘是模型『记不住 / 容量不够』」。根因是<strong>干扰</strong>而非容量——网络参数是<strong>所有任务的共享存储</strong>,新任务的 SGD 梯度并不知道「哪些权重对旧任务重要」,于是直接把它们<strong>覆盖</strong>掉。所以<strong>单靠把模型加大并不能解决</strong>,得保护重要权重 / 回放旧分布 / 隔离子网。</p>
+</div>
 <h2 id="sec-2">2. 三大方法族 / Three method families</h2>
 <h3 id="sec-3">2.1 正则化方法 / Regularization</h3>
 <p><strong>核心思想</strong>:在新任务的损失上加一个<strong>保护旧权重</strong>的惩罚项,让&quot;对旧任务重要的权重&quot;尽量不动。</p>
@@ -292,6 +307,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <td>否</td>
 </tr>
 </tbody></table>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>误区:</strong> 「EWC 这类正则化方法能彻底防遗忘」。正则化与回放都只是<strong>近似零遗忘</strong>(软约束 / 抽样混合):EWC 的 λ 太小仍遗忘、太大新任务学不动。真正<strong>结构性零遗忘</strong>只有参数隔离(ProgNN 冻结旧列 / PackNet 掩码),代价是参数随任务数增长。</p>
+</div>
 <h2 id="sec-6">3. 知识蒸馏路线 / Knowledge Distillation: LwF</h2>
 <p><strong>LwF(Learning without Forgetting)</strong><span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">训练新任务时,把旧模型的软输出作为蒸馏目标,不需要存储任何旧数据就能缓解遗忘。<a href="https://arxiv.org/abs/1606.09282">Li 2016 ↗</a></span></span>:</p>
 <ul>
@@ -340,6 +358,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <blockquote>
 <p><strong>Forgetting</strong> 有时直接定义为每个任务&quot;学完时 vs. 最终&quot;的准确率下降均值,与 BWT 互为正负。</p>
 </blockquote>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>误区:</strong> 「BWT 绝对值越大越好」。BWT 是<strong>带符号</strong>指标:负值表示遗忘、越负越糟,理想是 <strong>≥0 或接近 0</strong>(正值 = 旧任务还被后续任务反哺)。读 CL 论文时别把「BWT 大」当好——要看它是正是负、离 0 多近。</p>
+</div>
 <h2 id="sec-8">5. LLM 视角 / The LLM Angle</h2>
 <h3 id="sec-9">5.1 Continual Pretraining</h3>
 <p>在初始预训练后用新领域语料继续训练语言模型(如医疗文本、代码更新),核心挑战:</p>
@@ -364,6 +385,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <li><strong>Replay 旧偏好数据</strong>——混入前序对齐阶段的数据</li>
 <li><strong>LoRA 每阶段独立 adapter</strong>——主干不动,对齐行为局部化</li>
 </ol>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>误区:</strong> 「对齐链条 <code>SFT→DPO→RL</code> 每一步互不影响」。每一跳都是在前一跳 checkpoint 上继续训练,本身就是一个 CL 问题:alignment tax <strong>逐跳累积</strong>(SFT 过度压缩多样性、DPO 后再 RLHF 可能 over-refusal / 格式退化)。这也是为什么 KL 约束(PPO clip / DPO 参考模型)本质 = EWC 的隐式类比。</p>
+</div>
 <h3 id="sec-12">5.4 为什么 CL 对 LLM post-training 重要</h3>
 <table>
 <thead>
@@ -396,6 +420,9 @@ l0,-144c-2,-159.3,-10,-310.7,-24,-454c-53.3,-528,-210,-949.7,
 <p>其闭式解是对 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>W</mi></mrow><annotation encoding="application/x-tex">W</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">W</span></span></span></span> 的一个 <strong>rank-1 更新</strong>——既保住已有关联 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mtext> ⁣</mtext><mo>→</mo><mtext> ⁣</mtext><mi>V</mi></mrow><annotation encoding="application/x-tex">K\!\to\!V</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="mspace" style="margin-right:-0.1667em;"></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">→</span><span class="mspace" style="margin-right:-0.1667em;"></span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.2222em;">V</span></span></span></span>,又让目标主语的键映射到新宾语。</p>
 <p><strong>MEMIT(Mass-Editing Memory in a Transformer)</strong><span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">把 ROME 的单条编辑扩展到跨多个中间层、成批数千条事实的批量更新。<a href="https://arxiv.org/abs/2210.07229">Meng 2022 ↗</a></span></span>:把 ROME 的单条编辑扩展到<strong>成批数千条事实</strong>,跨多个中间层分摊更新,解决 ROME 顺序逐条编辑大量事实时的退化。</p>
 <p><strong>顺序编辑的遗忘</strong>:连续编辑多条事实时,后续编辑会干扰先前编辑(edit interference),并可能波及无关知识与通用能力——这正是 CL 的灾难性遗忘在&quot;编辑&quot;范式下的再现。因此编辑质量要同时看三轴:<strong>reliability</strong>(目标事实改对)、<strong>generalization</strong>(对释义/同义改写同样生效)、<strong>locality / specificity</strong>(无关知识不被波及)。三者间存在权衡,与 stability-plasticity 同构。</p>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>误区:</strong> 「ROME/MEMIT 改一条事实,改完就完、不影响别的」。顺序编辑多条会<strong>互相干扰(edit interference)</strong>,还可能波及无关知识与通用能力——正是灾难性遗忘在「编辑」范式下的再现。所以编辑质量要同时看三轴:reliability(改对)/ generalization(释义同义也生效)/ locality(无关知识不被波及),三者间存在权衡。</p>
+</div>
 <h2 id="sec-14">6. 从零实现:EWC 二次惩罚 / From-scratch EWC</h2>
 <details class="code-fold"><summary>69 行 / lines</summary><pre><code class="hljs language-python"><span class="hljs-keyword">import</span> torch
 <span class="hljs-keyword">import</span> torch.nn.functional <span class="hljs-keyword">as</span> F
