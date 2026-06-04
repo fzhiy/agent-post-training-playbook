@@ -9,6 +9,19 @@
 `单轮 RLHF(prompt→response→reward)` → `单轮可验证 RLVR(对/错→reward)` → **`多轮 agentic RL(轨迹→稀疏终端 reward)`**。
 变的不是损失函数,而是 **episode 的形状**:一条 episode 是 `(reasoning, tool_call, observation)` 反复多轮<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">让 LLM 把推理与工具调用交错(think→act→observe),边想边行动。<a href="https://arxiv.org/abs/2210.03629">Yao 2022 ↗</a></span></span>,reward 往往只在**最后**(任务成功与否)给一次。
 
+**TL;DR 速查(2 分钟过一遍)**
+
+- **变的是 episode 形状,不是损失**:单轮 RLHF→RLVR→多轮 agentic RL,一条 episode = `(思考 → 工具调用 → 观察)` 反复,reward 常只在**终端**给一次。
+- **长程 = POMDP**:工具返回前部分可观测;动作空间 = token + 工具调用 + **何时停**;核心难点 = 稀疏终端 reward 的**信用分配** + 误差累积。
+- **信用三粒度**:trajectory(均摊)/ turn(需 step reward 或 value)/ token(由 turn-level **广播** + action mask);越细越准、越依赖 critic/PRM。
+- **GRPO 组相对 baseline** 天然可搬:组内终端 return 归一化当 baseline、免 critic;但**稀疏下整组全零 → std=0 → advantage 退化**。
+- **观测 token 必须掩掉**:工具返回是环境注入、非 policy 生成;不掩 = 对观测做 SFT、污染策略梯度。
+- **奖励设计**:终端可验证(RLVR)最稳;step/PRM 缓解稀疏但**易被 gaming**;长程 reward hacking = 空转 / 提前停 / 里程碑刷分。
+- **几乎都两段式**:SFT 热启(学格式 + 把成功率抬到 RL 有梯度)→ RL 超越演示;代表 AgentTuning / Agent-FLAN / ReFT / ReSearch。
+- **具名 recipe**:ToolRL(shaping)/ RAGEN-StarPO(Echo Trap)/ WebRL(自进化课程)/ SWE-RL(规则奖励);2025 改进 DAPO / CISPO / VAPO + 系统级 AReaL。
+- **off-policy 纠偏**:PPO clip 只控方差**不纠偏**;异步需小 policy lag / ESS / V-trace 双截断 / 全局 advantage 归一化(REINFORCE++)。
+- **会单轮就能迁移**:抓「轨迹化 + 掩码 + 组相对 baseline」三点即可。
+
 ## 1. 什么让任务"长程" / What makes it long-horizon
 
 | 维度 | 单轮推理 RL | 长程 agentic RL |
@@ -41,11 +54,15 @@ $$A(\tau_i)=\frac{R(\tau_i)-\mathrm{mean}(R)}{\mathrm{std}(R)+\epsilon}.$$
 
 > 过程奖励 **PRM**<span class="cite-wrap"><a class="cite" id="fnref-3" href="#ref-3">3</a><span class="cite-note">对每一步推理打分(过程监督),不只看最终对错。<a href="https://arxiv.org/abs/2305.20050">Lightman 2023 ↗</a></span></span>(给每步打分)对长程信用分配更友好,但**标注/训练更贵**且自身可能被 hack;**ORM**(只看结果)便宜但信用分配粗。长程场景常是两者折中。
 
+> ❌ **误区:** 「GRPO 的组内相对 baseline 在长程里照样稳」。稀疏成功率下同一任务的一组轨迹常**全部失败 → 组内 std=0 → advantage 退化为零、梯度消失**(全零组退化)。缓解:加大 group size / 用可验证里程碑补正例 / SFT 热启抬高基础成功率,而不是在全零组上空跑 rollout。
+
 ## 4. 奖励设计 / Reward design
 
 - **可验证结果奖励(RLVR→agentic)**<span class="cite-wrap"><a class="cite" id="fnref-4" href="#ref-4">4</a><span class="cite-note">用可自动判定的对错(而非奖励模型)作 RL 信号。<a href="https://arxiv.org/abs/2411.15124">Lambert 2024 ↗</a></span></span>:能自动判定的终端信号最稳 —— 单元测试通过、环境状态达成、答案可校验。
 - **过程 / step reward**:中间里程碑给分,缓解稀疏性,但**易被刷**(agent 学会触发里程碑而不解决任务)。
 - **长程 reward hacking**:轨迹越长,捷径越多(空转凑步数、反复调用廉价工具)。缓解:终端可验证为主 + 步数/成本惩罚 + 对工具输出**只读不学**(见 §5 掩码)。
+
+> ❌ **误区:** 「过程奖励(step/PRM)总比只看结果(ORM)好」。step reward 缓解稀疏,但**易被 gaming**——agent 学会触发里程碑而不真正解决任务;且 proxy 分一路涨、gold(终端成功率)不涨甚至降,比 ORM 的「信号全零」**更难诊断**。稳妥做法:以终端可验证奖励为主,中间只用**可验证里程碑**(子单测通过)当 step 信号。
 
 ## 5. 算法要点 / Algorithm essentials
 
@@ -81,6 +98,8 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 > rollout 阶段要**在循环里真实执行工具/环境**(常异步),轨迹更长 → 采样更贵 → 是 agentic RL 的主要系统瓶颈之一。
 
+> ❌ **误区:** 「把单轮 RL 损失直接套到多轮轨迹就行」。工具返回 / 环境观测是**注入**进上下文的、不是 policy 生成的;不在损失里**掩掉**,等于对观测做 SFT、污染策略梯度。多轮相对单轮的两处硬改动 = **观测 token 掩码** + **turn-level advantage 广播到 token 再乘 action mask**。
+
 ## 6. 训练管线:SFT 热启 → RL / Training pipeline
 
 agent 训练几乎都是两段式:**SFT 热启 → RL 精调**。开放动作空间 + 稀疏终端奖励下,预训练模型直接 RL 几乎探不到成功轨迹(成功率随步数指数衰减、group 常全零 → 梯度消失),也不会基本的工具调用格式;先用专家 / 成功轨迹 SFT 把格式与轨迹结构学会、把成功率抬到 RL 能产生有效梯度,再 RL 超越演示。
@@ -89,6 +108,8 @@ agent 训练几乎都是两段式:**SFT 热启 → RL 精调**。开放动作空
 - **Agent-FLAN**(arXiv:2403.12881):把「格式遵循」与「agent 推理」**拆开**做数据,并加**负样本**(教模型拒绝错误工具调用、抑制 agent 幻觉)——SFT 数据设计层面的改进。
 - **ReFT**(arXiv:2401.08967):SFT 热启(CoT)→ **在线 PPO** 在自采样推理路径上精调,提升泛化(无需额外题)。
 - **ReSearch**(arXiv:2503.19470):**纯 RL** 学会把搜索调用与 CoT 交错,无监督推理步标注——把工具使用直接 RL 进去。
+
+> ❌ **误区:** 「SFT 热启越多越好」。热启的目的只是学会工具调用格式、把成功率抬到 RL 能产生有效梯度;**过度 SFT 会把策略钉死在演示分布**,RL 阶段探索空间被压窄、过早收敛到「模仿」而非「超越」,还会继承放大 SFT 数据的格式 / 风格偏置。热启到「能稳定产出可用轨迹」即止。
 
 ## 7. 代表性 agent-RL 配方 / Representative recipes
 
@@ -99,18 +120,26 @@ agent 训练几乎都是两段式:**SFT 热启 → RL 精调**。开放动作空
 | **WebRL**(2411.02337) | web agent | **自进化在线课程**(从失败 / 难度边界任务生成新题)+ ORM;WebArena-Lite 上 Llama-3.1-8B 4.8%→42.4% |
 | **SWE-RL**(2502.18449,Meta) | 代码修复 | 在开源软件演化数据上用**规则奖励** RL;SWE-bench Verified 41.0%(Llama3-70B) |
 
-**2025 RL 改进(算法变体 + 系统)**:
+**2025–2026 RL 改进(算法变体 + 系统)**:
 
 - **DAPO**(2503.14476,ByteDance):**clip-higher**(上调正向 clip 上界防熵坍塌)+ overlong reward shaping + dynamic sampling + token-level PG loss。
 - **CISPO**(MiniMax-M1,2506.13585):**截断 IS 权重(per-token)而非把低概率 token 置零**,保留所有 token 的梯度贡献(含罕见「反思」token)。
 - **VAPO**(2504.05118):价值增强 PPO(value-augmented),解决 value 偏差 + 异质序列长度。
 - **AReaL**(2505.24298)**(系统级,非算法变体)**:**全异步 RL 系统**,解耦生成与训练(见 §5 rollout 贵)。
+- **SkyRL-Agent**(2511.16108,NovaSky/Berkeley)**(系统级)**:面向**长程多轮工具**的异步训练栈,核心是**异步流水线派发器**——把 CPU 侧的运行时初始化 / 奖励计算与 GPU 生成重叠起来(长短轨迹混批时不被慢轨迹拖住),作者报告较 naive 异步批处理约 **1.55×** 吞吐;可对接 VeRL / Tinker 后端。**(系统工程加速,非新损失/新 advantage)**。
+- **T²PO**(2605.02178)**(探索控制 · 极新预印)**:**不确定性门控**——估计每一步「再多想/多试一轮」对边际不确定性的下降量,据此**触发 thinking 干预(token 级)/ 对低进展的轮做重采样(turn 级)**,把算力从已确定的步挪到真正不确定的步,缓解长程下探索预算的浪费。
+
+> ⚠️ **T²PO(2605.02178)是 2026-05 极新预印**:此处只取其**机制**(不确定性门控何时停止探索),**不引任何分数**;ID / 口径以原文为准,落地配方请按本仓「benchmark 快变 + 污染」红线自行复核。
 
 > ⚠️ 表 / 列表中数字为**原文报告**(模型 / 配置见原文);benchmark 快变且易受污染,公开复现结论可能不同。
+
+> ❌ **误区:** 「Echo Trap 和 GRPO 全零组退化是一回事」。两者方向相反:**全零组**是没有正信号 → 梯度消失(探索**不足**),解法是难度课程 / 可验证里程碑补正例;**Echo Trap**(RAGEN/StarPO)是有正信号但坍缩到单一「奏效过」的措辞模板 → 多样性 / 熵下降(探索**坍塌**),解法是方差 / 熵过滤 + 熵正则。前者缺正例,后者正例同质化。
 
 ## 8. 与单轮的衔接 / Bridge from single-turn
 
 姊妹仓库的 **GRPO / RLVR / 损失掩码** 是积木;agentic RL ≈ 把它们**作用在轨迹上** + 解决"稀疏终端 reward 的信用分配"。会单轮 → 抓住"轨迹化 + 掩码 + 组相对 baseline"三点即可迁移。
+
+> 📝 **两种 test-time compute(TTC)别混**:**reasoning-TTC**(单轮内**想得更深**:更长 CoT / 更多采样投票)花算力在「一步内的思考深度」;**agentic-TTC**(**多交互更多轮**:更多 think→act→observe 循环 / 更多工具调用)花算力在「与环境交互的轮数」。前者瓶颈是单轮推理质量,后者瓶颈是长程信用分配 + 探索预算(见 §3 / Q6)——所以把 reasoning 那套(投票 / best-of-N)直接搬到 agent 上往往不够,得管「轮」而非只管「token」。
 
 ---
 
@@ -397,6 +426,8 @@ $$w(\tau) = \frac{\pi_\theta(\tau)}{\pi_{\theta_\text{old}}(\tau)} = \prod_{t \i
 
 3. **replay + 优先经验回放**:保留少量历史成功轨迹,以更高概率重采样 — 让模型在极稀疏环境中持续看到"什么是成功"。代价:引入 off-policy 问题(见 Q3)。
 
+4. **hindsight 重标注(HER,1707.01495)**:把**失败**轨迹按它**实际到达的状态**当成「目标」重新打标——失败轨迹对原目标 reward=0,但对「它恰好达成的那个状态」reward=1,于是稀疏二元 reward 下也能从失败里榨出正信号(等价于一条**隐式课程**:总有「事后看成功」的子目标)。**关键限制**:需要**目标可重标注**的 goal-conditioned 空间;开放式 agent 任务(如「修好这个 bug」)失败轨迹**没有**可平凡重标注的目标——「跑了一堆没修好」不能事后说成「成功修好了某个别的 bug」,所以 HER 在 LLM agent 上常只适用于**目标 goal-conditioned 且「已达成状态」可重标注**的子任务(导航到某状态 / 检索到指定文档),不能无脑套到通用 SWE/GUI。
+
 **面试追问**:"如果任务成功率始终 <5%,还能用 GRPO 吗?" — 实务经验:group size 需要大到能保证 group 内至少 1 条成功;否则整个 group 的 advantage 退化为全零,等于白跑 rollout。此时建议先用 SFT 热启(从少量成功轨迹学),再切换 RL。
 
 ---
@@ -429,6 +460,8 @@ action_mask=0 的 token:`system_prompt`、`user_turn_*`、所有 `obs_*`(工具�
 | 与 GAE 的关系 | GAE 用 $V$ 函数近似步级 advantage | PRM 直接提供步级 advantage 估计 |
 
 **PRM 的步级 advantage 定义**:理论上最干净的 PRM 步级 reward 是该步骤带来的"未来成功率变化":$r_t^{\text{PRM}} = P(\text{success}|s_{t+1}) - P(\text{success}|s_t)$。这与 RL 里的 advantage($Q(s,a)-V(s)$)在定义上等价<span class="cite-wrap"><a class="cite" href="#ref-8">8</a><span class="cite-note">把 PRM 的步级奖励定义为步级 advantage(未来成功率的变化量),理论上等价于 RL 的 Q-V 差,并需要用独立 prover policy 而非当前策略来估计。<a href="https://arxiv.org/abs/2410.08146">Setlur 2024 ↗</a></span></span>。实践里用**蒙特卡洛 rollout 估计**$P(\text{success}|s_t)$,代价是每步需要大量 rollout。
+
+> 📝 **把上面的 $P(\text{success})$ 估计落到 agent 上 = AgentPRM**(2502.10325):用 **MC rollout 的 actor-critic 过程奖励**把每步的 Q / 过程信号自动标出来(免逐步人工标注),还给出 **InversePRM**——从**成功演示**反推过程奖励、省掉显式 outcome 标注(但仍需 learner rollout 构造负例);后续(2511.08325)把信号从「是否成功」拆成 **promise(≈Q)/ progress(≈advantage)**(用 TD + GAE 估「这一步把成功概率往前推了多少」),其中 progress 项更贴上面 $P(\text{success}|s_{t+1})-P(\text{success}|s_t)$ 的定义。**caveat**:其报告分数依赖具体 benchmark / 配置(且部分为极新预印),此处只取**机制**(MC 过程奖励如何自动化步级信用),不引分数。
 
 **面试陷阱**:"用了 PRM 就不需要 discount $\gamma$ 了吗?" — 错。PRM 提供的是**步级奖励**,这些奖励仍然需要用折扣或 GAE 累加成 return;PRM 解决的是"哪步该给多少奖励",不解决"如何把多步奖励折算成当前策略的梯度信号"。
 

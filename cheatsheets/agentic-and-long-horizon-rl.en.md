@@ -9,6 +9,19 @@
 `Single-turn RLHF (prompt→response→reward)` → `Single-turn verifiable RLVR (correct/incorrect→reward)` → **`Multi-turn agentic RL (trajectory→sparse terminal reward)`**.
 What changes is not the loss function, but the **shape of the episode**: An episode consists of `(reasoning, tool_call, observation)` repeated over multiple turns<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">Enabling LLMs to interleave reasoning with tool calls (think→act→observe), thinking while acting.<a href="https://arxiv.org/abs/2210.03629">Yao 2022 ↗</a></span></span>, and the reward is often given only **once at the end** (task success or failure).
 
+**TL;DR — quick anchors (2-minute pass)**
+
+- **What changes is the episode shape, not the loss**: single-turn RLHF→RLVR→multi-turn agentic RL; one episode = `(think → tool call → observe)` repeated, reward usually given **only at the terminal**.
+- **Long-horizon = POMDP**: partially observable until the tool returns; action space = token + tool call + **when to stop**; core difficulty = **credit assignment** for sparse terminal reward + error accumulation.
+- **Three credit granularities**: trajectory (shared) / turn (needs step reward or value) / token (turn-level advantage **broadcast** + action mask); finer = more accurate but more reliant on critic/PRM.
+- **GRPO group-relative baseline** transfers naturally: normalize within-group terminal returns as baseline, no critic; but **under sparsity an all-failure group → std=0 → advantage degenerates**.
+- **Observation tokens must be masked**: tool returns are environment-injected, not policy-generated; not masking = doing SFT on observations, polluting the policy gradient.
+- **Reward design**: verifiable terminal reward (RLVR) is most stable; step/PRM reward eases sparsity but is **easily gamed**; long-horizon reward hacking = idling / premature stop / milestone gaming.
+- **Almost always two-stage**: SFT warm-start (learn the format + lift success rate so RL has gradient) → RL to surpass demos; e.g. AgentTuning / Agent-FLAN / ReFT / ReSearch.
+- **Named recipes**: ToolRL (shaping) / RAGEN-StarPO (Echo Trap) / WebRL (self-evolving curriculum) / SWE-RL (rule-based reward); 2025 improvements DAPO / CISPO / VAPO + system-level AReaL.
+- **Off-policy correction**: PPO clip only controls variance, **does not de-bias**; async needs small policy lag / ESS / V-trace double clipping / global advantage normalization (REINFORCE++).
+- **If you know single-turn, you can transfer**: just grab "trajectorize + mask + group-relative baseline".
+
 ## 1. What makes it long-horizon
 
 | Dimension | Single-turn Reasoning RL | Long-horizon Agentic RL |
@@ -41,11 +54,15 @@ $$A(\tau_i)=\frac{R(\tau_i)-\mathrm{mean}(R)}{\mathrm{std}(R)+\epsilon}.$$
 
 > A **Process Reward Model (PRM)**<span class="cite-wrap"><a class="cite" id="fnref-3" href="#ref-3">3</a><span class="cite-note">Scoring each step of reasoning (process supervision), not just the final correctness.<a href="https://arxiv.org/abs/2305.20050">Lightman 2023 ↗</a></span></span> (scoring each step) is more friendly for long-horizon credit assignment, but **annotation/training is more expensive** and it can be hacked itself; an **ORM** (only looking at the outcome) is cheaper but has coarse credit assignment. Long-horizon scenarios often involve a compromise between the two.
 
+> ❌ **Misconception:** "GRPO's group-relative baseline stays stable in long-horizon too." Under low success rates a task's whole rollout group often **all fail → within-group std=0 → advantage degenerates to zero, gradient vanishes** (all-zero-group degeneration). Mitigations: larger group size / verifiable milestones to inject positives / SFT warm-start to lift the base success rate—not spinning rollouts on an all-zero group.
+
 ## 4. Reward design
 
 - **Verifiable Outcome Reward (RLVR→agentic)**<span class="cite-wrap"><a class="cite" id="fnref-4" href="#ref-4">4</a><span class="cite-note">Using automatically determinable correctness (instead of a reward model) as the RL signal.<a href="https://arxiv.org/abs/2411.15124">Lambert 2024 ↗</a></span></span>: The most stable terminal signal is one that can be automatically determined — unit tests passing, environment state achieved, answer verifiable.
 - **Process / Step Reward**: Giving points for intermediate milestones alleviates sparsity but is **prone to gaming** (the agent learns to trigger milestones without solving the task).
 - **Long-horizon reward hacking**: The longer the trajectory, the more shortcuts exist (idling to accumulate steps, repeatedly calling cheap tools). Mitigation: Focus on verifiable terminal rewards + step/token cost penalties + **read-only but don't learn from tool outputs** (see §5 masking).
+
+> ❌ **Misconception:** "Process reward (step/PRM) always beats outcome-only (ORM)." Step reward eases sparsity but is **easily gamed**—the agent learns to trigger milestones without actually solving the task; and proxy score keeps rising while gold (terminal success) stalls or drops, **harder to diagnose** than ORM's "all-zero signal." Safe practice: terminal verifiable reward as the primary signal, with only **verifiable milestones** (sub-unit-tests passing) as the step signal.
 
 ## 5. Algorithm essentials
 
@@ -81,6 +98,8 @@ def masked_pg_loss(logp, adv_per_token, action_mask):
 
 > The rollout phase requires **actually executing tools/environment within the loop** (often asynchronously), leading to longer trajectories → more expensive sampling → a major system bottleneck for agentic RL.
 
+> ❌ **Misconception:** "Just apply the single-turn RL loss directly to multi-turn trajectories." Tool returns / environment observations are **injected** into context, not policy-generated; not **masking** them in the loss = doing SFT on observations, polluting the policy gradient. The two hard changes from single- to multi-turn = **observation-token masking** + **broadcasting turn-level advantage to tokens then multiplying by the action mask**.
+
 ## 6. Training pipeline: SFT warm-start → RL
 
 Agent training is almost always two-stage: **SFT warm-start → RL fine-tune**. Under an open action space + sparse terminal reward, RL from a pretrained model barely explores any successful trajectory (success rate decays exponentially with steps, the group is often all-zero → vanishing gradient), and it doesn't even know the basic tool-call format. First SFT on expert / successful trajectories to learn the format and trajectory structure and raise the success rate to where RL produces a useful gradient, then RL to surpass the demonstrations.
@@ -89,6 +108,8 @@ Agent training is almost always two-stage: **SFT warm-start → RL fine-tune**. 
 - **Agent-FLAN** (arXiv:2403.12881): **separates** "format following" from "agent reasoning" in the data and adds **negative samples** (teaching the model to decline wrong tool calls / suppress agent hallucination) — an improvement at the SFT-data-design level.
 - **ReFT** (arXiv:2401.08967): SFT warm-start (CoT) → **online PPO** fine-tuning over self-sampled reasoning paths, improving generalization (no extra questions needed).
 - **ReSearch** (arXiv:2503.19470): **pure RL** to learn to interleave search calls with CoT, with no supervised reasoning-step labels — putting tool use directly into RL.
+
+> ❌ **Misconception:** "More SFT warm-start is always better." Warm-start only aims to learn the tool-call format and lift the success rate to where RL produces useful gradients; **over-SFT pins the policy to the demo distribution**, narrowing RL-stage exploration and prematurely converging to "imitate" rather than "surpass," while inheriting and amplifying the SFT data's format/style bias. Warm-start just until "stably producing usable trajectories," then stop.
 
 ## 7. Representative recipes
 
@@ -99,18 +120,26 @@ Agent training is almost always two-stage: **SFT warm-start → RL fine-tune**. 
 | **WebRL** (2411.02337) | web agent | **self-evolving online curriculum** (generate new tasks from failed / difficulty-frontier tasks) + ORM; WebArena-Lite Llama-3.1-8B 4.8%→42.4% |
 | **SWE-RL** (2502.18449, Meta) | code fix | **rule-based reward** RL on open software-evolution data; SWE-bench Verified 41.0% (Llama3-70B) |
 
-**2025 RL improvements (algorithm variants + systems)**:
+**2025–2026 RL improvements (algorithm variants + systems)**:
 
 - **DAPO** (2503.14476, ByteDance): **clip-higher** (raise the positive clip upper bound to prevent entropy collapse) + overlong reward shaping + dynamic sampling + token-level PG loss.
 - **CISPO** (MiniMax-M1, 2506.13585): **clips the IS weight (per-token) instead of zeroing low-probability tokens**, retaining the gradient contribution of all tokens (including rare "reflective" tokens).
 - **VAPO** (2504.05118): value-augmented PPO, addressing value bias + heterogeneous sequence lengths.
 - **AReaL** (2505.24298) **(systems-level, not an algorithm variant)**: a **fully asynchronous RL system** that decouples generation from training (cf. §5 rollouts are expensive).
+- **SkyRL-Agent** (2511.16108, NovaSky/Berkeley) **(systems-level)**: an asynchronous training stack for **long-horizon multi-turn tool** use; its core is an **asynchronous pipeline dispatcher** that overlaps CPU-bound runtime init / reward computation with GPU generation (so a mixed batch of long and short trajectories isn't throttled by the slow ones); the authors report ~**1.55×** throughput over naive async batching, and it interoperates with VeRL / Tinker backends. **(an engineering speedup, not a new loss / new advantage.)**
+- **T²PO** (2605.02178) **(exploration control · very recent preprint)**: **uncertainty gating** — it estimates how much "thinking/trying one more turn" reduces marginal uncertainty at each step, and uses that to **trigger a thinking intervention (token level) / resample low-progress turns (turn level)**, reallocating compute away from already-resolved steps toward genuinely uncertain ones, mitigating wasted exploration budget over long horizons.
+
+> ⚠️ **T²PO (2605.02178) is a very recent 2026-05 preprint**: only its **mechanism** is taken here (uncertainty gating of when to stop exploring); **no scores are cited**; treat the ID / framing as per the original and re-check any concrete recipe against this repo's "benchmarks move fast + contamination" red line.
 
 > ⚠️ Numbers in the table / list are **as reported in the original papers** (model / config per the original); benchmarks move fast and are contamination-prone, so public-reproduction conclusions may differ.
+
+> ❌ **Misconception:** "Echo Trap and GRPO all-zero-group degeneration are the same thing." They are opposite: an **all-zero group** has no positive signal → vanishing gradient (**too little** exploration), fixed by difficulty curriculum / verifiable milestones; **Echo Trap** (RAGEN/StarPO) has positive signal but collapses onto a single "what worked before" phrasing template → diversity/entropy drops (exploration **collapse**), fixed by variance/entropy filtering + entropy regularization. The former lacks positives; the latter has homogenized positives.
 
 ## 8. Bridge from single-turn
 
 The **GRPO / RLVR / loss masking** from the sibling repository are the building blocks; Agentic RL ≈ **applying them to trajectories** + solving "credit assignment for sparse terminal rewards". If you understand single-turn, grasping the three points of "trajectory formulation + masking + group relative baseline" enables the transition.
+
+> 📝 **Don't conflate two kinds of test-time compute (TTC)**: **reasoning-TTC** (**think deeper within a turn**: longer CoT / more samples to vote over) spends compute on "depth of thought within one step"; **agentic-TTC** (**interact over more turns**: more think→act→observe loops / more tool calls) spends compute on "the number of environment interactions." The former's bottleneck is single-turn reasoning quality; the latter's is long-horizon credit assignment + exploration budget (cf. §3 / Q6) — which is why porting the reasoning toolkit (voting / best-of-N) directly onto an agent is often insufficient: you must manage "turns," not just "tokens."
 
 ---
 
@@ -397,6 +426,8 @@ Multi-turn agentic: $s_t$ = historical conversation + previous turn's tool retur
 
 3. **Replay + Prioritized Experience Replay**: Retain a small number of historical success trajectories and resample them with higher probability — letting the model continually see "what is success" in extremely sparse environments. Cost: Introduces off-policy issues (see Q3).
 
+4. **Hindsight relabeling (HER, 1707.01495)**: Relabel a **failed** trajectory by the state it **actually reached**, treating that as the "goal" — the trajectory has reward=0 for the original goal but reward=1 for "the state it happened to achieve," so even under sparse binary reward you extract a positive signal from failure (equivalent to an **implicit curriculum**: there is always a subgoal that "succeeded in hindsight"). **Key limitation**: it needs a **relabelable** goal-conditioned space; open-ended agent tasks (e.g., "fix this bug") have **no** trivially relabelable goal from failure — "ran a bunch and didn't fix it" cannot be retroactively recast as "successfully fixed some other bug" — so on LLM agents HER usually applies only to subtasks with a **goal-conditioned, relabelable achieved-goal space** (reaching some state / retrieving a specified document) and cannot be blindly ported to general SWE/GUI.
+
 **Interview Follow-up**: "If the task success rate is always <5%, can GRPO still be used?" — Practical experience: Group size needs to be large enough to guarantee at least 1 success within the group; otherwise, the entire group's advantage degenerates to all zeros, equivalent to running rollouts for nothing. At this point, it is recommended to first use SFT warm-starting (learning from a small set of successful trajectories) before switching to RL.
 
 ---
@@ -429,6 +460,8 @@ Tokens with action_mask=0: `system_prompt`, `user_turn_*`, all `obs_*` (tool ret
 | Relationship with GAE | GAE uses $V$ function to approximate step-level advantage | PRM directly provides step-level advantage estimates |
 
 **PRM's step-level advantage definition**: Theoretically, the cleanest PRM step-level reward is the "change in future success probability" brought by that step: $r_t^{\text{PRM}} = P(\text{success}|s_{t+1}) - P(\text{success}|s_t)$. This is definitionally equivalent to RL's advantage ($Q(s,a)-V(s)$)<span class="cite-wrap"><a class="cite" href="#ref-8">8</a><span class="cite-note">Defining PRM's step-level reward as step-level advantage (change in future success probability) is theoretically equivalent to RL's Q-V difference and needs to be estimated using an independent prover policy, not the current policy.<a href="https://arxiv.org/abs/2410.08146">Setlur 2024 ↗</a></span></span>. In practice, **Monte Carlo rollout estimation** of $P(\text{success}|s_t)$ is used, at the cost of requiring numerous rollouts per step.
+
+> 📝 **Operationalizing that $P(\text{success})$ estimate on agents = AgentPRM** (2502.10325): it uses an **MC-rollout actor-critic process reward** to auto-label per-step Q / process targets (no manual step annotation), and adds **InversePRM** — inferring the process reward from **successful demonstrations**, sparing explicit outcome labels (though it still uses learner rollouts to build negatives); a follow-up (2511.08325) splits the signal from "did it succeed" into **promise (≈Q) / progress (≈advantage)** (using TD + GAE to estimate "how much this step moved success probability forward"), whose *progress* term hews closer to the $P(\text{success}|s_{t+1})-P(\text{success}|s_t)$ definition above. **Caveat**: their reported scores depend on the specific benchmark / config (and some are very recent preprints); only the **mechanism** is taken here (how MC process reward automates step-level credit), no scores cited.
 
 **Interview Trap**: "If PRM is used, is the discount $\gamma$ no longer needed?" — Incorrect. PRM provides **step-level rewards**, which still need to be accumulated into a return using discounting or GAE. PRM solves "how much reward each step should get," not "how to convert multi-step rewards into gradient signals for the current policy."
 
