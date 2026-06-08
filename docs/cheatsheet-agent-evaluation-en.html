@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Evaluation</title>
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" href="vendor/hl/github.min.css">
+<link rel="stylesheet" href="vendor/hl/github-dark.min.css" media="(prefers-color-scheme: dark)">
+<style>
+  :root{
+    color-scheme:light dark;
+    --bg:#fdfcf7; --bg-soft:#f4f1ea; --bg-code:#f8f5ec; --ink:#2b2b2b; --ink-soft:#4a4a4a; --muted:#6b6b6b;
+    --accent:#b8390e;  /* 赭红 — 加粗/强调/inline code */
+    --primary:#1a4a8c; /* navy — 链接/H3/表头/代码边条 */
+    --line:#8884; --border:#d6d0c0; --border-soft:#e8e3d5;
+    --thead-bg:#1a4a8c; --thead-fg:#ffffff;
+    --c-info-bg:#dbeafe; --c-info:#1a4a8c;
+    --c-warn-bg:#fef3c7; --c-warn:#b45309;
+    --c-good-bg:#d1fae5; --c-good:#065f46;
+    --c-bad-bg:#fee2e2;  --c-bad:#991b1b;
+  }
+  body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+       font:16px/1.75 Georgia,"Iowan Old Style","Songti SC","Noto Serif CJK SC","STSong",serif;word-wrap:break-word}
+  h1,h2,h3,h4{line-height:1.3;margin-top:1.6em;color:#1a1a1a;font-weight:700}
+  h1{font-size:1.55rem}
+  h2{font-size:1.32rem;border-bottom:1px solid var(--border);padding-bottom:.25em;margin-top:1.9em}
+  h3{font-size:1.1rem;color:var(--primary)}
+  strong{color:var(--accent)}
+  em{color:var(--ink-soft)}
+  a{color:var(--primary);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;font-size:.88em}
+  :not(pre)>code{background:var(--bg-code);color:var(--accent);padding:.1em .4em;border-radius:3px;border:1px solid var(--border-soft)}
+  pre{margin:1em 0;background:var(--bg-code);border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:4px;overflow-x:auto}
+  pre code.hljs{background:transparent!important;border-radius:0}
+  pre.diagram{background:#f9f6ed;border-left-color:var(--accent);font-size:.9em;line-height:1.45}
+  table{border-collapse:collapse;width:100%;display:block;overflow-x:auto;font-size:.92rem;border:1px solid var(--border)}
+  thead{background:var(--thead-bg);color:var(--thead-fg)}
+  th,td{padding:.5em .7em;text-align:left;vertical-align:top;border-bottom:1px solid var(--border-soft)}
+  th{font-weight:600;font-size:.9rem;letter-spacing:.02em}
+  tbody tr:nth-child(even){background:var(--bg-soft)}
+  tbody tr:last-child td{border-bottom:none}
+  blockquote{border-left:3px solid var(--border);margin:1em 0;padding:.3em 1em;color:var(--muted);background:#0000000a;border-radius:0 6px 6px 0}
+  nav.top{max-width:1080px;margin:1rem auto .4rem;padding:0 1.1rem;font-size:.88rem;font-family:system-ui,sans-serif;display:flex;justify-content:space-between;align-items:center;gap:1rem}
+  .lang-toggle{flex:none;border:1px solid var(--border);border-radius:999px;padding:.12em .7em;color:var(--primary);font-size:.82rem;white-space:nowrap}
+  .lang-toggle:hover{background:var(--bg-soft);text-decoration:none}
+  /* 提示框 (emoji 触发, 构建时包裹) */
+  .callout{border-left:4px solid;border-radius:4px;padding:.6em 1em;margin:1.1em 0;font-size:.97em}
+  .callout>:first-child{margin-top:0}
+  .callout>:last-child{margin-bottom:0}
+  .callout-info{border-left-color:var(--c-info);background:var(--c-info-bg)}
+  .callout-warn{border-left-color:var(--c-warn);background:var(--c-warn-bg)}
+  .callout-good{border-left-color:var(--c-good);background:var(--c-good-bg)}
+  .callout-bad{border-left-color:var(--c-bad);background:var(--c-bad-bg)}
+  .callout-label{font:700 .72rem/1.4 system-ui,"PingFang SC","Microsoft YaHei",sans-serif;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3em}
+  .callout-info .callout-label{color:var(--c-info)}
+  .callout-warn .callout-label{color:var(--c-warn)}
+  .callout-good .callout-label{color:var(--c-good)}
+  .callout-bad .callout-label{color:var(--c-bad)}
+  /* 折叠 Q&A (问题在 summary, 答案默认折叠) */
+  details:not(.toc):not(.code-fold){border:1px solid var(--line);border-radius:8px;margin:.6em 0;background:var(--bg-soft);padding:0 .9em}
+  details:not(.toc):not(.code-fold)>summary{cursor:pointer;font-weight:600;color:var(--primary);padding:.55em .1em;list-style:none;font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+  details:not(.toc):not(.code-fold)>summary::-webkit-details-marker{display:none}
+  details:not(.toc):not(.code-fold)>summary::before{content:"▸ ";color:var(--accent)}
+  details:not(.toc):not(.code-fold)[open]>summary::before{content:"▾ "}
+  details:not(.toc):not(.code-fold)[open]>summary{border-bottom:1px solid var(--line);margin-bottom:.5em}
+  details:not(.toc):not(.code-fold)>:not(summary):last-child{margin-bottom:.7em}
+  /* 折叠长代码 */
+  .code-fold{margin:1em 0}
+  .code-fold>summary{cursor:pointer;color:var(--primary);font-size:.85rem;padding:.25em 0;list-style:none;font-family:system-ui,sans-serif}
+  .code-fold>summary::-webkit-details-marker{display:none}
+  .code-fold>summary::before{content:"▸ 展开代码 · "}
+  .code-fold[open]>summary::before{content:"▾ 收起代码 · "}
+  .code-fold pre{margin:.3em 0}
+  /* 时间线: "时间线/Timeline" 标题后的列表自动套用 (build.js markTimeline) */
+  ul.timeline,ol.timeline{list-style:none;padding-left:1.2em;border-left:2px solid var(--border);margin:1.1em 0}
+  .timeline li{position:relative;margin:.55em 0;padding-left:.7em}
+  .timeline li::before{content:"";position:absolute;left:-1.33em;top:.5em;width:9px;height:9px;border-radius:50%;background:var(--accent);border:2px solid var(--bg)}
+  .timeline li strong{color:var(--primary)}
+  /* ARIS 式 hero 页头: eyebrow 小标签 + 大标题 + 副标题 + 双线 (标题从正文 H1 提升至此) */
+  .hero{max-width:1080px;margin:1.1rem auto .2rem;padding:0 1.1rem}
+  body.no-toc .hero{max-width:820px}
+  .hero .eyebrow{font:400 .82rem/1.4 system-ui,"PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:.01em;color:var(--muted);margin-bottom:.4em}
+  .hero-title{font-size:2rem;line-height:1.2;margin:.1rem 0 .25rem;color:#1a1a1a;font-weight:700;letter-spacing:-.01em}
+  .hero-sub{font:italic 400 1.05rem/1.5 Georgia,"Songti SC","Noto Serif CJK SC",serif;color:var(--ink-soft);margin:.1rem 0 .55rem}
+  .hero-rule{border-top:3px double var(--primary);margin:.4rem 0 0}
+  /* 两栏: 左 sticky 侧栏 TOC + 正文; ≤900px 折成单栏、TOC 移到顶部; scrollspy 高亮当前节 */
+  .layout{max-width:820px;margin:0 auto;padding:0 1.1rem 4rem;display:grid;grid-template-columns:1fr}
+  body:not(.no-toc) .layout{max-width:1080px;grid-template-columns:220px minmax(0,1fr);gap:36px;align-items:start}
+  main#out{min-width:0}
+  nav.toc{position:sticky;top:1rem;align-self:start;max-height:calc(100vh - 2rem);overflow:auto;font-size:.85rem;font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif;border-right:1px solid var(--line);padding:.2em 14px 0 0}
+  nav.toc .toc-h{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;margin-bottom:.6em}
+  nav.toc ul{list-style:none;padding:0;margin:0}
+  nav.toc li{margin:.18em 0}
+  nav.toc li.lv3{padding-left:1em;font-size:.95em;opacity:.8}
+  nav.toc a{color:var(--muted);text-decoration:none;border-left:2px solid transparent;padding-left:.55em;display:block;line-height:1.4}
+  nav.toc a:hover{color:var(--primary)}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);font-weight:600}
+  @media (max-width:900px){
+    body:not(.no-toc) .layout{grid-template-columns:1fr;gap:0}
+    nav.toc{position:static;max-height:none;overflow:visible;border-right:none;border-bottom:1px solid var(--line);padding:0 0 .7em;margin-bottom:1.2em}
+  }
+  /* 引用 (gwern/Tufte 式, 零 JS): [N] 上标可点跳底部; .cite-note gist 宽屏(≥1180px)浮右页边、窄屏隐藏 */
+  .cite-wrap{display:inline}
+  .cite{color:var(--primary);font-weight:600;font-size:.72em;vertical-align:super;padding:0 .12em;white-space:nowrap;text-decoration:none}
+  .cite::before{content:"["}
+  .cite::after{content:"]"}
+  .cite:hover{text-decoration:underline}
+  .cite-note{display:none}
+  ol.refs{font-size:.95rem;padding-left:1.6em}
+  ol.refs li{margin:.4em 0}
+  ol.refs li:target{background:#b8390e1a;border-radius:4px}
+  .katex-display{overflow-x:auto;overflow-y:hidden;padding:.2em 0}
+  @media(prefers-color-scheme:dark){
+    :root{
+      --bg:#16181c; --bg-soft:#22262c; --bg-code:#1d2025; --ink:#dcdcdc; --ink-soft:#aeb7bf; --muted:#9aa6b0;
+      --accent:#e8845c; --primary:#7fb0e8; --line:#ffffff33; --border:#ffffff26; --border-soft:#ffffff14;
+      --thead-bg:#25406a; --thead-fg:#eaf2fb;
+      --c-info-bg:#7fb0e81e; --c-info:#9cc4f0;
+      --c-warn-bg:#d9a52614; --c-warn:#e0a83a;
+      --c-good-bg:#2a7a4b1e; --c-good:#5fc080;
+      --c-bad-bg:#b8390e1e;  --c-bad:#e8845c;
+    }
+    h1,h2,h4,.hero-title{color:#ededed}  /* h3 keeps var(--primary) (navy) */
+    blockquote{background:#ffffff0a}
+    pre.diagram{background:#23262b}
+  }
+  @media print{
+    nav.toc,nav.top{display:none}
+    body:not(.no-toc) .layout{grid-template-columns:1fr;max-width:none}
+    body{background:#fff;color:#000}
+    .hero-rule{border-top-color:#000}
+    .callout,pre,table,details{break-inside:avoid}
+  }
+  /* (引用 gist 右页边浮动已移除以让位左侧栏 TOC; [N] 仍跳底部 refs, gist 文本在书目里不丢) */
+</style>
+</head>
+<body class="has-sn">
+<nav class="top"><a href="index.html">← Study Index</a><a class="lang-toggle" href="cheatsheet-agent-evaluation.html">中文 ⇄</a></nav>
+<header class="hero"><div class="eyebrow">Cheatsheet</div><h1 class="hero-title">Agent Evaluation</h1><div class="hero-rule"></div></header>
+<div class="layout">
+<nav class="toc"><div class="toc-h">目录 / Contents</div><ul><li class="lv2"><a href="#sec-0">0. TL;DR</a></li><li class="lv2"><a href="#sec-1">1. Why agent-eval ≠ single-turn eval</a></li><li class="lv2"><a href="#sec-2">2. Benchmark taxonomy</a></li><li class="lv2"><a href="#sec-3">3. Contamination · Saturation · Living benchmarks</a></li><li class="lv3"><a href="#sec-4">3.1 Contamination</a></li><li class="lv3"><a href="#sec-5">3.2 Saturation — the retirement of SWE-bench Verified (2026-02, verified)</a></li><li class="lv3"><a href="#sec-6">3.3 The living-benchmark paradigm</a></li><li class="lv2"><a href="#sec-7">4. Harness · Reproducibility · Variance</a></li><li class="lv3"><a href="#sec-8">4.1 The harness decides the score</a></li><li class="lv3"><a href="#sec-9">4.2 Variance: pass@k is an estimator</a></li><li class="lv2"><a href="#sec-10">5. Trajectory vs Outcome eval</a></li><li class="lv2"><a href="#sec-11">6. Safety &amp; sabotage eval</a></li><li class="lv2"><a href="#sec-12">Stratified follow-ups</a></li><li class="lv3"><a href="#sec-13">L1 Basics</a></li><li class="lv3"><a href="#sec-14">L2 Intermediate</a></li><li class="lv3"><a href="#sec-15">L3 Deep</a></li><li class="lv2"><a href="#sec-16">References</a></li></ul></nav>
+<main id="out"><blockquote>
+<p>The <strong>metrology</strong> of agent post-training: how to tell whether an agent actually works. Read <a href="cheatsheet-agent-foundations-en.html">agent-foundations</a> first to know what an agent is and which benchmarks / human baselines exist; then use this page to learn <strong>contamination / saturation / harness / trajectory evaluation</strong> — the literacy you need to <em>read technical-report numbers correctly</em>. Afterwards head to <a href="cheatsheet-agentic-and-long-horizon-rl-en.html">agentic-and-long-horizon-rl</a> to wire verifiable rewards into RL.</p>
+</blockquote>
+<div class="callout callout-warn"><div class="callout-label">注意 / Caution</div>
+<p><strong>Study notes, not the author&#39;s own research</strong> (see README disclaimer). Benchmark numbers move fast and are contamination-prone, so this page records <strong>only original-paper human baselines + what is tested + the evaluation methodology</strong>, never model SOTA; every concrete score carries a date / source / caveat.</p>
+</div>
+<h2 id="sec-0">0. TL;DR</h2>
+<ul>
+<li><strong>Agent eval ≠ single-turn QA eval</strong>: it measures goal attainment over a <strong>multi-step trajectory</strong> (execution-based terminal-state checking), not a single answer matched against a reference string; three extra axes: <strong>reliability (pass^k), trajectory quality, resistance to time-decay</strong>.</li>
+<li>Benchmarks split along <strong>two orthogonal axes</strong>: capability domain (coding / web / GUI / tool-user / general / ML-eng) × judging method (execution / trajectory / LLM-judge). Human baselines live in foundations §8; this page does not repeat them, only classifies + adds methodology.</li>
+<li><strong>Contamination = the #1 killer of agent eval</strong>: test samples (GitHub issues, solutions) leak into the training set → you measure <strong>memorization, not generalization</strong>, and scores inflate. <strong>LiveCodeBench</strong> uses a <strong>release-time window</strong> to evaluate only problems published after the cutoff, cutting contamination at the root.</li>
+<li><strong>Saturation example (2026-02, verified)</strong>: OpenAI officially <strong>stopped reporting SWE-bench Verified</strong> — scores &quot;no longer reflect real development ability, and increasingly reflect how much of the benchmark the model has seen&quot;; it pivoted to the contamination-resistant <strong>SWE-bench Pro</strong> (the same cohort drops from ~70–80% → ~23–58% magnitude, varying by shard/source/scaffold; not a stable ranking, see §3.2).</li>
+<li><strong>Harness decides the score</strong>: swap scaffold / prompt / toolset on the same model and the score moves materially (public reports often show swings on the order of ten points, varying by scaffold/benchmark, no fixed value); a reported score MUST cite the <strong>harness version</strong>, otherwise you are comparing model×harness, not model.</li>
+<li><strong>Variance</strong>: <code>pass@k</code> is an <strong>estimator</strong> with variance (temperature / seed / environment randomness all matter); a single number is not reproducible — report <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples + an unbiased estimator.</li>
+<li><strong>Trajectory vs outcome</strong>: outcome-only misses &quot;lucky guess / reward hacking&quot;; trajectory eval checks per-step plausibility, but using an LLM to judge trajectories has its own reliability pitfalls (calibration belongs to the sister page <a href="https://ac.fzhiy.net/post-training-playbook/cheatsheet-reward-modeling-eval.html">reward-modeling-eval</a>; only touched here).</li>
+<li><strong>Verifiable ≠ perfect</strong>: an execution-based verifier still false-positives (weak unit tests pass a wrong solution) / false-negatives (over-strict tests reject a correct solution — exactly SWE-bench Verified&#39;s defective items).</li>
+<li><strong>Safety eval is orthogonal to capability</strong>: sabotage / privilege escalation / prompt-injection must be listed separately; numbers like a &quot;multi-agent orchestrator&#39;s malicious-execution rate under injection attack&quot; or &quot;sabotage&quot; <strong>must carry a threat-model + attack-scenario caveat</strong>, never read as general deployment behavior.</li>
+</ul>
+<h2 id="sec-1">1. Why agent-eval ≠ single-turn eval</h2>
+<p>Single-turn QA eval: input → one output → compare to a reference (EM / F1 / accuracy), one-shot and near-deterministic. Agent eval measures <strong>a multi-step trajectory</strong>: actions change environment state, &quot;success&quot; = terminal state satisfies the goal (execution-based), not string matching. This brings several dimensions single-turn eval lacks:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Single-turn QA</th>
+<th>Agent</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Success criterion</td>
+<td>match a reference answer (EM/F1)</td>
+<td><strong>terminal state / unit test / environment check</strong> (execution-based, verifiable)</td>
+</tr>
+<tr>
+<td>Stochasticity</td>
+<td>low (single decode)</td>
+<td>high (multi-step sampling + environment randomness) → must run many times for a distribution</td>
+</tr>
+<tr>
+<td>Reliability</td>
+<td>accuracy</td>
+<td><strong>pass^k</strong> (all k succeed), see foundations §9</td>
+</tr>
+<tr>
+<td>Process</td>
+<td>ignored</td>
+<td><strong>trajectory quality</strong>: step count, right tool, any reward hacking</td>
+</tr>
+<tr>
+<td>Time stability</td>
+<td>static</td>
+<td><strong>contamination + saturation</strong> make the same score decay over time</td>
+</tr>
+</tbody></table>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;agent eval = run the benchmark&#39;s accuracy.&quot; Accuracy is just a point estimate; what is actually hard in agent eval is <strong>designing the execution-based criterion</strong> (anti-cheat), <strong>reliability across multiple runs</strong> (pass^k), and <strong>whether the score is still trustworthy over time</strong> (contamination / saturation). Ignore these three and the leaderboard number is misleading.</p>
+</div>
+<h2 id="sec-2">2. Benchmark taxonomy</h2>
+<p>Human baselines and &quot;what is tested&quot; are already listed in <a href="cheatsheet-agent-foundations-en.html">agent-foundations §8</a>, so this page <strong>does not repeat</strong> them — instead it locates each benchmark methodologically along <strong>two orthogonal axes</strong>:</p>
+<ul>
+<li><strong>Axis A · capability domain</strong>: coding / web / GUI (computer-use) / multi-turn tool-user / general assistant / ML engineering.</li>
+<li><strong>Axis B · judging method × interactivity</strong>: execution-based outcome (run unit tests / check terminal state) vs trajectory vs LLM-judge; static one-shot vs interactive environment.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>Domain</th>
+<th>Judging</th>
+<th>Interaction</th>
+<th>Key design point</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>SWE-bench</strong><span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">2294 real GitHub issues; edit the repo so hidden unit tests pass. <a href="https://arxiv.org/abs/2310.06770">Jimenez 2023 ↗</a></span></span></td>
+<td>coding</td>
+<td>execution (hidden tests)</td>
+<td>repo interaction</td>
+<td>real issue→PR, FAIL_TO_PASS tests as criterion</td>
+</tr>
+<tr>
+<td><strong>WebArena</strong><span class="cite-wrap"><a class="cite" id="fnref-5" href="#ref-5">5</a><span class="cite-note">812 long-horizon tasks across 4 self-hosted domains (e-commerce/forum/GitLab/CMS); functional terminal-state check. <a href="https://arxiv.org/abs/2307.13854">Zhou 2023 ↗</a></span></span></td>
+<td>web</td>
+<td>execution (terminal-state)</td>
+<td>self-hosted sandbox web</td>
+<td>reproducible, resettable real-site replicas</td>
+</tr>
+<tr>
+<td><strong>OSWorld</strong><span class="cite-wrap"><a class="cite" id="fnref-6" href="#ref-6">6</a><span class="cite-note">369 computer-use tasks on a real OS, scripted terminal-state checking. <a href="https://arxiv.org/abs/2404.07972">Xie 2024 ↗</a></span></span></td>
+<td>GUI</td>
+<td>execution (terminal-state script)</td>
+<td>real OS interaction</td>
+<td>multimodal, cross-app, execution-based not multiple-choice</td>
+</tr>
+<tr>
+<td><strong>τ-bench</strong><span class="cite-wrap"><a class="cite" id="fnref-8" href="#ref-8">8</a><span class="cite-note">Tool-agent-user multi-turn with policy constraints; introduces pass^k reliability. <a href="https://arxiv.org/abs/2406.12045">Yao 2024 ↗</a></span></span></td>
+<td>tool-user</td>
+<td>terminal DB + <strong>pass^k</strong></td>
+<td>simulated-user multi-turn</td>
+<td>policy constraints + reliability as a first-class metric</td>
+</tr>
+<tr>
+<td><strong>GAIA</strong><span class="cite-wrap"><a class="cite" id="fnref-7" href="#ref-7">7</a><span class="cite-note">General assistant: reasoning + multimodal + web + tools, three difficulty tiers, uniquely judgeable answers. <a href="https://arxiv.org/abs/2311.12983">Mialon 2023 ↗</a></span></span></td>
+<td>general</td>
+<td>exact-match answer</td>
+<td>static (with tools)</td>
+<td>unique answer, auto-judged; tiered difficulty</td>
+</tr>
+<tr>
+<td><strong>MLE-bench</strong><span class="cite-wrap"><a class="cite" id="fnref-9" href="#ref-9">9</a><span class="cite-note">75 Kaggle ML-engineering competitions, agents graded by medal rate. <a href="https://arxiv.org/abs/2410.07095">Chan 2024 ↗</a></span></span></td>
+<td>ML-eng</td>
+<td>Kaggle scoring (medals)</td>
+<td>long-horizon interaction</td>
+<td>reuses existing leaderboards as an objective ruler</td>
+</tr>
+<tr>
+<td><strong>LiveCodeBench</strong><span class="cite-wrap"><a class="cite" id="fnref-10" href="#ref-10">10</a><span class="cite-note">Rolls in problems by competition <strong>release window</strong>, evaluating only post-cutoff items to prevent contamination. <a href="https://arxiv.org/abs/2403.07974">Jain 2024 ↗</a></span></span></td>
+<td>coding (competitive)</td>
+<td>execution</td>
+<td>static-but-windowed</td>
+<td><strong>time-window anti-contamination</strong>, living</td>
+</tr>
+</tbody></table>
+<div class="callout callout-info"><div class="callout-label">提示 / Note</div>
+<p><strong>Selection principle (echoing foundations Q13):</strong> look at &quot;does the action space + task distribution match the target scenario.&quot; Domains overlap (SWE-bench and LiveCodeBench both test coding, but the former tests repo-level issue fixing, the latter algorithmic contests + anti-contamination); the <strong>judging method</strong> decides &quot;can I trust this score&quot; more than the domain — execution-based + hidden criteria are hardest to cheat, LLM-judge is easiest to manipulate.</p>
+</div>
+<h2 id="sec-3">3. Contamination · Saturation · Living benchmarks</h2>
+<p>This is the section agent eval <strong>most often crashes on</strong>, and the first gate when reading report numbers.</p>
+<h3 id="sec-4">3.1 Contamination</h3>
+<p><strong>Mechanism</strong>: test samples (problems, even official solutions) enter the training corpus → the model &quot;remembers&quot; rather than &quot;solves,&quot; and the score measures memory. Two paths:</p>
+<ol>
+<li><strong>Direct</strong>: the problem + solution text is crawled into the training set (SWE-bench&#39;s issues and fix PRs are all on public GitHub — inherently high-risk).</li>
+<li><strong>Indirect</strong>: the solution is paraphrased in blogs / forums and then enters the training set.</li>
+</ol>
+<p><strong>How to detect contamination</strong>: ① n-gram / substring overlap scan of the training corpus; ② <strong>memorization-recall test</strong> — give only the problem statement, no executable environment, and see whether the model can directly emit the official fix (if it can, strong hint it has seen it); ③ <strong>time-window cliff</strong> — compare scores on problems before vs after the cutoff; if older problems score far higher than structurally identical new ones, that is a contamination signal.</p>
+<div class="callout callout-info"><div class="callout-label">提示 / Note</div>
+<p><strong>LiveCodeBench&#39;s solution: the release window.</strong> Evaluate only on contest problems published <strong>after</strong> the model&#39;s training cutoff, guaranteeing at the root that &quot;the model could not have seen it during training&quot;; &quot;living&quot; = continuously rolling in new problems and retiring old ones. This is currently one of the cleanest anti-contamination paradigms (cost: problem types skew to algorithmic contests, narrower coverage than real engineering).</p>
+</div>
+<h3 id="sec-5">3.2 Saturation — the retirement of SWE-bench Verified (2026-02, verified)</h3>
+<p><strong>Saturation</strong> = top models&#39; scores approach the ceiling, discrimination vanishes, and the benchmark loses its discriminative power. The most representative contemporary case:</p>
+<p>On <strong>2026-02-23</strong> OpenAI officially announced it would <strong>stop evaluating frontier models on SWE-bench Verified</strong><span class="cite-wrap"><a class="cite" id="fnref-2" href="#ref-2">2</a><span class="cite-note">OpenAI&#39;s 2024-08 human-verified clean 500-problem subset. <a href="https://openai.com/index/introducing-swe-bench-verified/">OpenAI 2024 ↗</a></span></span><span class="cite-wrap"><a class="cite" id="fnref-3" href="#ref-3">3</a><span class="cite-note">OpenAI 2026-02-23: Verified is saturated + contaminated, no longer reflecting real development ability. <a href="https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/">OpenAI 2026 ↗</a></span></span>, for two reasons:</p>
+<ul>
+<li><strong>Contamination</strong>: in OpenAI&#39;s elicitation experiments, frontier models on <strong>some tasks</strong> reproduce the official fix or task-specific details from memory given only the problem statement — a strong signal they saw the solutions during training.</li>
+<li><strong>Defective problems</strong>: OpenAI audited the <strong>138 problems</strong> its o3 <strong>did not consistently solve across 64 independent runs</strong> (<strong>27.6%</strong> of the 500) and found <strong>59.4% of them have substantial defects in test design / problem statement</strong> — <strong>35.5% (≈49) too narrow</strong> (strict tests reject functionally correct solutions), <strong>18.8% (≈26) too wide</strong> (testing extra functionality the statement never required), the remaining ~5% description defects. I.e. part of the &quot;failures&quot; are benchmark misjudgments, not model incapacity.</li>
+</ul>
+<div class="callout callout-good"><div class="callout-label">要点 / Key</div>
+<p><strong>OpenAI&#39;s conclusion (paraphrased):</strong> gains on Verified &quot;no longer reflect progress in real software-development ability, and increasingly reflect how much of this benchmark the model saw during training.&quot; This is a living textbook of &quot;saturation + contamination&quot; jointly killing a former gold standard.</p>
+</div>
+<p><strong>Replacement</strong>: OpenAI pivoted to the contamination-resistant <strong>SWE-bench Pro</strong><span class="cite-wrap"><a class="cite" id="fnref-4" href="#ref-4">4</a><span class="cite-note">Scale AI 2025: a harder, contamination-resistant SWE-bench variant; public/private/commercial shards. <a href="https://labs.scale.com/leaderboard/swe_bench_pro_public">Scale AI 2025 ↗</a></span></span>, and argues for moving to <strong>expert-authored private</strong> benchmarks (e.g. GDPval). The magnitude gap is striking: the same cohort at ~<strong>70–80%</strong> on Verified drops to <strong>~23–58% magnitude</strong> on Pro (concrete scores shift with shard / leaderboard / scaffold, see caveat below).</p>
+<div class="callout callout-warn"><div class="callout-label">注意 / Caution</div>
+<p><strong>caveat (integrity gate):</strong> SWE-bench Pro&#39;s <strong>concrete model scores</strong> are a single 2025–26 source (the Scale leaderboard) and shift with the board; this page uses only the &quot;~70–80% → ~23–58% magnitude gap&quot; to illustrate the <strong>methodological phenomenon</strong> of saturation/contamination, not as a stable ranking or a fixed capability value for any model.</p>
+</div>
+<h3 id="sec-6">3.3 The living-benchmark paradigm</h3>
+<p>The general remedy for contamination + saturation: <strong>rotate problems periodically / roll a release window (LiveCodeBench) / hold out a private set (GDPval-style expert authoring) / commercial closed-source shards (SWE-bench Pro private)</strong>. The core is to invalidate the &quot;memorize the problem&quot; shortcut.</p>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;leaderboard scores keep rising = agent ability is improving.&quot; High scores may come from <strong>contamination</strong> (memorizing), <strong>scaffold engineering</strong> (see §4), or <strong>overfitting</strong> to that benchmark; real progress is whether <strong>newly released, contamination-resistant</strong> living benchmarks + <strong>pass^k</strong> reliability rise in step — and verify the harness and date.</p>
+</div>
+<h2 id="sec-7">4. Harness · Reproducibility · Variance</h2>
+<h3 id="sec-8">4.1 The harness decides the score</h3>
+<p><strong>Harness (the eval scaffold)</strong> = all the engineering that connects the model to the benchmark: prompt template, toolset, output parser, retry / step budget, retrieval strategy, whether environment feedback is given. <strong>Swap the harness on the same model and the score can move materially (public reports often show swings on the order of ten points, varying by benchmark/scaffold, no fixed value)</strong> — much of SWE-bench&#39;s early leaderboard gains came from scaffold engineering, not the model.</p>
+<div class="callout callout-info"><div class="callout-label">提示 / Note</div>
+<p><strong>Corollary:</strong> a benchmark compares <strong>model × harness</strong>, not pure model. A reported score <strong>must</strong> attach the harness version + config (toolset, max steps, temperature, retrieval on/off); otherwise two numbers are simply incomparable. When a report says &quot;we reached X%&quot; without describing the harness, discount that number&#39;s credibility.</p>
+</div>
+<h3 id="sec-9">4.2 Variance: pass@k is an estimator</h3>
+<p>Agent-eval randomness comes from three places: ① <strong>sampling</strong> (temperature &gt; 0); ② <strong>environment randomness</strong> (web / tool returns vary, simulated users are random); ③ <strong>the estimator itself</strong> — <code>pass@k</code> is not the truth but an estimate from <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples; small <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> means high variance.</p>
+<p>Codex / HumanEval<span class="cite-wrap"><a class="cite" id="fnref-11" href="#ref-11">11</a><span class="cite-note">Chen 2021 introduces HumanEval and the unbiased pass@k estimator; repeated sampling is a strong baseline. <a href="https://arxiv.org/abs/2107.03374">Chen 2021 ↗</a></span></span> gives the <strong>unbiased estimator</strong> for pass@k: draw <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples per problem, of which <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi></mrow><annotation encoding="application/x-tex">c</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">c</span></span></span></span> are correct, then</p>
+<p><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>pass@</mtext><mi>k</mi><mo>=</mo><msub><mi mathvariant="double-struck">E</mi><mtext>problems</mtext></msub><mrow><mo fence="true">[</mo><mtext> </mtext><mn>1</mn><mo>−</mo><mfrac><mrow><mo fence="true">(</mo><mfrac linethickness="0px"><mrow><mi>n</mi><mo>−</mo><mi>c</mi></mrow><mi>k</mi></mfrac><mo fence="true">)</mo></mrow><mrow><mo fence="true">(</mo><mfrac linethickness="0px"><mi>n</mi><mi>k</mi></mfrac><mo fence="true">)</mo></mrow></mfrac><mtext> </mtext><mo fence="true">]</mo></mrow></mrow><annotation encoding="application/x-tex">\text{pass@}k = \mathbb{E}_{\text{problems}}\left[\,1 - \frac{\binom{n-c}{k}}{\binom{n}{k}}\,\right]</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord text"><span class="mord">pass@</span></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:3em;vertical-align:-1.25em;"></span><span class="mord"><span class="mord mathbb">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">problems</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size4">[</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.5923em;"><span style="top:-2.26em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">(</span></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7454em;"><span style="top:-2.355em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span style="top:-3.144em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">n</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.345em;"><span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">)</span></span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.74em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">(</span></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8523em;"><span style="top:-2.355em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span style="top:-3.144em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">n</span><span class="mbin mtight">−</span><span class="mord mathnormal mtight">c</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.345em;"><span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">)</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.09em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size4">]</span></span></span></span></span></span></span></p>
+<p>Intuition: <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo fence="true">(</mo><mfrac linethickness="0px"><mrow><mi>n</mi><mo>−</mo><mi>c</mi></mrow><mi>k</mi></mfrac><mo fence="true">)</mo></mrow><mi mathvariant="normal">/</mi><mrow><mo fence="true">(</mo><mfrac linethickness="0px"><mi>n</mi><mi>k</mi></mfrac><mo fence="true">)</mo></mrow></mrow><annotation encoding="application/x-tex">\binom{n-c}{k}/\binom{n}{k}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:1.2023em;vertical-align:-0.35em;"></span><span class="mord"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">(</span></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8523em;"><span style="top:-2.355em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span style="top:-3.144em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">n</span><span class="mbin mtight">−</span><span class="mord mathnormal mtight">c</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.345em;"><span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">)</span></span></span><span class="mord">/</span><span class="mord"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">(</span></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7454em;"><span style="top:-2.355em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span style="top:-3.144em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">n</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.345em;"><span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">)</span></span></span></span></span></span> is the probability of &quot;drawing <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi></mrow><annotation encoding="application/x-tex">k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span> samples that are all wrong,&quot; and <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mo>−</mo></mrow><annotation encoding="application/x-tex">1-</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">1</span><span class="mord">−</span></span></span></span> it is &quot;drawing at least one correct.&quot; <strong>Running a single group of <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi></mrow><annotation encoding="application/x-tex">k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span> samples and checking whether ≥1 succeeds is unbiased but extremely high-variance (one group is only 0/1); this combinatorial form uses all <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples — equally unbiased but far lower-variance.</strong> Stable only when <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi><mo>≫</mo><mi>k</mi></mrow><annotation encoding="application/x-tex">n \gg k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.5782em;vertical-align:-0.0391em;"></span><span class="mord mathnormal">n</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≫</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span>.</p>
+<div class="callout callout-warn"><div class="callout-label">注意 / Caution</div>
+<p><strong>Reproducibility red line:</strong> reporting only &quot;pass@1 = 41%&quot; without <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span>, temperature, seed, harness means <strong>nobody can reproduce it</strong>. The responsible report: fixed seed + the mean ± interval over <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples + the harness version. A lone number without these defaults to noisy variance.</p>
+</div>
+<h2 id="sec-10">5. Trajectory vs Outcome eval</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>outcome-only (execution-based)</th>
+<th>trajectory (process)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>What it looks at</td>
+<td>only <strong>terminal-state</strong> success</td>
+<td>whether <strong>each step</strong> is plausible</td>
+</tr>
+<tr>
+<td>Strength</td>
+<td>objective, verifiable; <strong>hard to cheat</strong> when the criterion is hidden</td>
+<td>can diagnose <strong>which step failed</strong>, give partial credit, feed a PRM</td>
+</tr>
+<tr>
+<td>Blind spot</td>
+<td>misses &quot;lucky guess / lucky path&quot; and <strong>reward hacking</strong> (edit the test, empty impl passes CI); no diagnosis</td>
+<td><strong>who judges</strong> is hard: rules miss coverage, LLM-judge carries bias</td>
+</tr>
+</tbody></table>
+<p><strong>Who judges the trajectory</strong>: ① <strong>programmatic rules</strong> (step count, whether a forbidden tool was called, whether a dangerous action fired) — reliable but narrow; ② <strong>LLM-as-judge</strong> — flexible but with position bias, self-preference, easily &quot;talked into it&quot; reliability issues.</p>
+<div class="callout callout-info"><div class="callout-label">提示 / Note</div>
+<p><strong>Scope boundary:</strong> LLM-judge <strong>calibration / reliability / de-biasing</strong> is the home turf of the sister page <a href="https://ac.fzhiy.net/post-training-playbook/cheatsheet-reward-modeling-eval.html">reward-modeling-eval</a>; this page only points at it: when judging agent trajectories, the judge&#39;s bias directly contaminates the process reward → credit assignment — details there.</p>
+</div>
+<p><strong>Agent-specific verifier reliability</strong>: even execution-based &quot;verifiable rewards&quot; err — tests <strong>too weak</strong> → <strong>false positive</strong> (a wrong solution sneaks through), tests <strong>too strict</strong> → <strong>false negative</strong> (a functionally correct solution is rejected, exactly §3.2&#39;s 49 &quot;too narrow&quot; defective items in SWE-bench Verified).</p>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;execution-based / verifiable reward = objective and reliable.&quot; Verifiable only means <strong>harder to cheat than an LLM-judge</strong>, not <strong>correct</strong>: the judge&#39;s quality ceiling is the quality of that unit-test / check script; a weak test suite passes reward hacking straight through as success, and in RL it gets amplified.</p>
+</div>
+<h2 id="sec-11">6. Safety &amp; sabotage eval</h2>
+<p>Capability eval asks &quot;can it do it right&quot;; safety eval asks &quot;will it do harm / overreach / get hijacked&quot; — <strong>the two are orthogonal</strong>, high capability does not imply safety. Three categories to list separately:</p>
+<ol>
+<li><strong>sabotage / sandbagging</strong>: the model deliberately underperforms or covertly subverts. Anthropic&#39;s sabotage evaluations<span class="cite-wrap"><a class="cite" id="fnref-13" href="#ref-13">13</a><span class="cite-note">An Anthropic <strong>evaluation framework</strong>: code sabotage / sandbagging / undermining oversight / decision sabotage. <a href="https://arxiv.org/abs/2410.21514">Anthropic 2024 ↗</a></span></span> are an <strong>evaluation framework</strong> (code sabotage, sandbagging, undermining oversight, decision sabotage) — this page <strong>describes only the framework, cites no specific percentage</strong> (a commonly circulated number could not be verified, dropped per the integrity gate).</li>
+<li><strong>prompt injection / tool poisoning</strong>: malicious instructions in external content hijack the agent (see foundations §10 + Greshake<span class="cite-wrap"><a class="cite" id="fnref-14" href="#ref-14">14</a><span class="cite-note">Indirect prompt injection: instructions in external content hijack an LLM application. <a href="https://arxiv.org/abs/2302.12173">Greshake 2023 ↗</a></span></span>).</li>
+<li><strong>privilege escalation / dangerous actions</strong>: high-privilege tools are misused (drop a database, make outbound requests).</li>
+</ol>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Integrity gate for citing safety numbers (a multi-agent injection-attack case):</strong> A multi-agent-system security study<span class="cite-wrap"><a class="cite" id="fnref-12" href="#ref-12">12</a><span class="cite-note">Triedman 2025: under a specific web injection attack, the attack success rate for a multi-agent orchestrator executing arbitrary malicious code (scope-locked). <a href="https://arxiv.org/abs/2503.12188">Triedman 2025 ↗</a></span></span> reports: under a <strong>specific web injection attack</strong>, the <strong>attack success rate</strong> for getting a multi-agent orchestrator to execute arbitrary malicious code reaches <strong>58–90%</strong> (varying by orchestrator), <strong>up to 100% in individual configurations</strong>. It is the <strong>success rate of a control-flow-hijack attack under that threat model</strong>, <strong>not</strong> &quot;agents will misbehave at this rate in normal deployment.&quot; Cite it with that scope, or you inflate an attack experiment into a general fact.</p>
+</div>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;high benchmark safety score = safe deployment.&quot; Safety eval is mostly run under a <strong>specific threat model</strong>; change the attack surface / privilege config and the conclusion changes. Safety is <strong>defense in depth</strong> (least privilege + host policy gate + monitoring), not a property that a single benchmark score can &quot;pass&quot; (expanded in the planned agent-safety page).</p>
+</div>
+<hr>
+<h2 id="sec-12">Stratified follow-ups</h2>
+<div class="callout callout-warn"><div class="callout-label">注意 / Caution</div>
+<p>The &quot;would be asked&quot; items below are <strong>inferred from public JDs + technical reports</strong>, not real interview questions.</p>
+</div>
+<h3 id="sec-13">L1 Basics</h3>
+<details class="qa"><summary>1. What is the essential difference between agent eval and single-turn QA eval? Why can't you just look at accuracy?</summary><p>A: Single-turn QA is &quot;input → one output → compare to a reference,&quot; one-shot and near-deterministic; agent eval measures <strong>a multi-step trajectory</strong> whose success criterion is the <strong>terminal state satisfying the goal</strong> (execution-based: run unit tests / check environment state), not string matching. Looking only at accuracy misses three agent-specific things: <strong>reliability across runs</strong> (pass^k), <strong>trajectory quality</strong> (any reward hacking / lucky guess), and <strong>score decay over time</strong> (contamination + saturation).</p>
+<p><strong>Follow-up:</strong> Why do agent benchmarks prefer execution-based criteria over answer matching? → Because the agent&#39;s &quot;correct&quot; is often not a unique string (code edits have many forms, web operations have many paths); it can only be judged by &quot;is the final executable goal state reached&quot;; execution-based is also harder to cheat (if the criterion is hidden).</p>
+</details><details class="qa"><summary>2. What is benchmark contamination? Why is it especially severe for agent benchmarks?</summary><p>A: Contamination = test samples (problems, even official solutions) enter the training corpus, so the model &quot;remembers&quot; rather than &quot;solves,&quot; and the score measures memory. It is especially severe for agent benchmarks because many tasks originate from <strong>public GitHub</strong> (SWE-bench&#39;s issues + fix PRs are public and crawled), so problems and gold solutions are naturally in the training set; add frontier models repeatedly farming these boards and overfitting + memorization compound.</p>
+<p><strong>Follow-up:</strong> How do you detect that a model is contaminated on a benchmark? → ① n-gram overlap scan of the training corpus; ② give only the statement, no environment, and see if it reproduces the official fix from memory; ③ compare score cliffs on structurally identical problems before vs after the training cutoff.</p>
+</details><details class="qa"><summary>3. What is the difference between pass@k and pass^k, and what does each one's "estimator" meaning entail?</summary><p>A: <code>pass@k</code> = <strong>at least one</strong> of k attempts succeeds (capability upper bound, optimistic); <code>pass^k</code> = <strong>all</strong> k succeed (reliability, see foundations §9). Neither is the truth — both are <strong>estimators</strong>: in practice you draw <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples per problem to estimate, and small <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> means high variance. pass@k has the unbiased estimator <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mo>−</mo><mrow><mo fence="true">(</mo><mfrac linethickness="0px"><mrow><mi>n</mi><mo>−</mo><mi>c</mi></mrow><mi>k</mi></mfrac><mo fence="true">)</mo></mrow><mi mathvariant="normal">/</mi><mrow><mo fence="true">(</mo><mfrac linethickness="0px"><mi>n</mi><mi>k</mi></mfrac><mo fence="true">)</mo></mrow></mrow><annotation encoding="application/x-tex">1-\binom{n-c}{k}/\binom{n}{k}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:1.2023em;vertical-align:-0.35em;"></span><span class="mord"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">(</span></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8523em;"><span style="top:-2.355em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span style="top:-3.144em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">n</span><span class="mbin mtight">−</span><span class="mord mathnormal mtight">c</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.345em;"><span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">)</span></span></span><span class="mord">/</span><span class="mord"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">(</span></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7454em;"><span style="top:-2.355em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span style="top:-3.144em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">n</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.345em;"><span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">)</span></span></span></span></span></span> (<span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi></mrow><annotation encoding="application/x-tex">c</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">c</span></span></span></span> = number correct among <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span>), lower-variance than &quot;count one hit/miss.&quot;</p>
+<p><strong>Follow-up:</strong> Why must reporting pass@k also report <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi></mrow><annotation encoding="application/x-tex">k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span>, temperature, and <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span>? → pass@k&#39;s value varies with <strong><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi></mrow><annotation encoding="application/x-tex">k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span> and the sampling distribution (temperature)</strong> — temperature changes per-sample success rate and diversity; whereas <strong><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> (the number of samples used to estimate it) only sets the variance / confidence interval and does NOT change pass@k&#39;s expected value</strong> (unless you actually change <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi></mrow><annotation encoding="application/x-tex">k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span> or do best-of-<span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span>). So missing <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi></mrow><annotation encoding="application/x-tex">k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span> / temperature → not comparable; missing <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> / seed → not reproducible.</p>
+</details><h3 id="sec-14">L2 Intermediate</h3>
+<details class="qa"><summary>4. Why was SWE-bench Verified deprecated by OpenAI in 2026? Explain along the contamination and saturation lines.</summary><p>A: Two lines compound. <strong>Contamination line</strong>: OpenAI&#39;s elicitation experiments show frontier models on some tasks reproduce the official fix from memory given only the statement → scores reflect &quot;how much benchmark was seen&quot; rather than real ability. <strong>Saturation/defect line</strong>: OpenAI audited the 138 problems its o3 did not consistently solve across 64 runs (27.6% of 500) and found 59.4% have substantial test/description defects — 35.5% (≈49) too narrow (reject functionally correct solutions), 18.8% (≈26) too wide (demand functionality the statement never mentioned), the rest ~5% description defects; i.e. part of the &quot;failures&quot; are benchmark misjudgments. Conclusion: gains on Verified no longer reflect real development ability. OpenAI pivoted to the contamination-resistant SWE-bench Pro (same cohort ~70–80%→~23–58% magnitude).</p>
+<p><strong>Follow-up:</strong> What to watch when citing &quot;drops to ~23–58% on SWE-bench Pro&quot;? → That is a single 2025–26 source (Scale leaderboard), a shifting concrete score; use it only to illustrate the &quot;magnitude gap from saturation/contamination,&quot; not as a stable ranking or fixed capability value.</p>
+</details><details class="qa"><summary>5. The same model can score materially differently (on the order of ten points) under different harnesses — what does that say? What info must a reported benchmark score carry?</summary><p>A: It says a benchmark compares <strong>model × harness</strong>, not pure model — prompt template, toolset, parser, step budget, retrieval strategy all materially move the score (SWE-bench&#39;s early gains were largely scaffold engineering). A responsible report must carry: <strong>harness version + toolset + max steps + temperature + seed + sample count <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> + date</strong>. A lone number missing these is incomparable and irreproducible.</p>
+<p><strong>Follow-up:</strong> What does this mean for &quot;reading others&#39; technical reports&quot;? → Seeing &quot;we reached X%&quot; without the harness and date, discount comparability; before comparing scores across reports, first confirm same harness, same benchmark version, whether contamination-resistant.</p>
+</details><details class="qa"><summary>6. How does LiveCodeBench's "release window" prevent contamination at the root? What are its limits?</summary><p>A: It evaluates only on contest problems newly published <strong>after</strong> the model&#39;s training cutoff — since the problems appeared after training, they <strong>cannot</strong> have been seen during training, cutting contamination mechanistically; &quot;living&quot; = continuously roll in new problems and retire old ones, staying fresh long-term. Limits: ① problem types skew <strong>algorithmic contests</strong>, narrower than real software engineering (no repo-level issues); ② requires ongoing operational effort; ③ different models have different cutoffs, so strict comparability requires windowing per each cutoff.</p>
+<p><strong>Follow-up:</strong> Time-window anti-contamination vs &quot;private hold-out / expert authoring&quot; (GDPval, SWE-bench Pro private) — what suits each? → Time windows suit domains with a steady stream of new problems (contests); private / expert authoring suits domains with no natural new-problem stream, or that need closeness to real professional tasks, at the cost of human effort for authoring + grading.</p>
+</details><details class="qa"><summary>7. For a concrete agent application (code-fixing, web browsing, customer-service tools, etc.), how do you choose benchmarks? What are the applicability ranges and key limitations?</summary><p>A: Filter by three matching criteria in order — ① <strong>Action-space match</strong>: what is the agent&#39;s operation granularity? Fixing code → SWE-bench Pro / LiveCodeBench; operating websites → WebArena; controlling an OS GUI → OSWorld; multi-turn tool + user interaction → τ-bench; ML engineering → MLE-bench; general-purpose QA + tool use → GAIA. ② <strong>Judging-method reliability</strong>: can you tolerate LLM-judge bias? High-stakes scenarios (code deployment, financial transactions) → prefer execution-based + hidden-criterion benchmarks; low-stakes exploratory scenarios → LLM-judge acceptable for initial filtering. ③ <strong>Maintenance status</strong>: is it actively maintained / living? A saturated benchmark (SWE-bench Verified, retired) cannot be the sole basis; living benchmarks (LiveCodeBench) or recently released, community-active ones are more trustworthy.</p>
+<p>Concrete mapping:</p>
+<table>
+<thead>
+<tr>
+<th>Application</th>
+<th>Recommended benchmarks (in priority order)</th>
+<th>Key limitation</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Code-fixing / PR agent</td>
+<td>SWE-bench Pro (contamination-resistant, 41 repos/multi-language) &gt; LiveCodeBench (general coding anti-contamination screen)</td>
+<td>Single-repo issue-level tasks; no product/requirements context; not multi-repo coordinated changes</td>
+</tr>
+<tr>
+<td>Web-operating agent</td>
+<td>WebArena (self-hosted, reproducible)</td>
+<td>4 self-hosted site categories + auxiliary knowledge/tool sites (map/wiki/calculator); not live-web OOD</td>
+</tr>
+<tr>
+<td>GUI / desktop-operating agent</td>
+<td>OSWorld (real OS, scripted terminal-state check)</td>
+<td>369 tasks, desktop OS not mobile; limited cross-app coverage</td>
+</tr>
+<tr>
+<td>Tool + dialogue agent (customer service / assistant)</td>
+<td>τ-bench (pass^k reliability) + GAIA (general)</td>
+<td>τ-bench domains fixed (retail/airline); GAIA only looks at terminal state</td>
+</tr>
+<tr>
+<td>ML-engineering agent</td>
+<td>MLE-bench (Kaggle medal rate)</td>
+<td>Skews to contest style; does not test day-to-day ML ops</td>
+</tr>
+</tbody></table>
+<div class="callout callout-info"><div class="callout-label">提示 / Note</div>
+<p><strong>Core principle:</strong> there is no &quot;best&quot; benchmark — only a benchmark whose &quot;action space + risk tolerance&quot; match. Define your success criteria first — what does &quot;success&quot; mean concretely in this scenario — then map through the three-axis framework.</p>
+</div>
+<p><strong>Follow-up:</strong> What if no existing benchmark fits your scenario? → ① Check whether a general-purpose benchmark (GAIA / τ-bench) can serve for an initial screen; ② if not, <strong>build a domain-specific eval</strong>: the key is making the success criterion <strong>executable</strong> (script / unit test / terminal-state check) and <strong>keeping it invisible to the agent</strong>; ③ estimate the construction cost: typically dozens to hundreds of items depending on baseline success rate + effect size + desired CI width (do a power analysis to determine item count; as a rough heuristic often ≥100), plus ongoing maintenance (item rotation to prevent overfitting).</p>
+</details><details class="qa"><summary>8. What are the known biases of LLM-as-judge for agent trajectories? When is it usable and when is it not?</summary><p>A: LLM-as-judge for agent trajectories carries <strong>three categories of bias risk that have been repeatedly documented in the literature</strong>:</p>
+<ol>
+<li><strong>Position / order bias</strong>: the order in which answers appear in the prompt, and whether content sits near the prompt&#39;s end, significantly affects judge scores. Gets worse with longer trajectories — agent multi-step trajectories are inherently longer than single-turn QA, so the last steps dominate the judge far more than the first.</li>
+<li><strong>Self-preference</strong>: a judge from the same model family tends to give higher scores to same-family agents; this has been observed across GPT, Gemini, and Claude families in multiple studies — directionally consistent, though the magnitude varies by model/task rather than being a fixed value.</li>
+<li><strong>Style / verbosity / authority bias</strong>: if the agent&#39;s trajectory includes confident, detailed, or authoritative-sounding explanation text, the LLM judge is more inclined to mark it correct even when the underlying action is wrong — the judge is influenced by rhetoric rather than facts (sometimes called verbosity bias, authority bias, or rationale bias).</li>
+</ol>
+<p><strong>When LLM-judge is usable:</strong></p>
+<ul>
+<li><strong>Relative ranking</strong> (A vs B which trajectory is better) — more reliable than absolute scoring; biases partially cancel in pairwise comparison.</li>
+<li><strong>Coarse filtering</strong> — screen out obviously bad trajectories (didn&#39;t call a tool / infinite loop / empty response), with rule-based criteria as the primary gate and LLM as the fallback.</li>
+<li><strong>Assistive pre-labeling</strong> — pre-annotate before human review to accelerate manual checking.</li>
+</ul>
+<p><strong>When it is NOT usable / requires extreme caution:</strong></p>
+<ul>
+<li><strong>As the reward source for RL training</strong> — biases will be actively searched and amplified by the policy, turning the objective into &quot;please the judge&quot; rather than &quot;complete the task.&quot;</li>
+<li><strong>As an absolute pass/fail criterion</strong> — reliability insufficient for a high-stakes single decision.</li>
+<li><strong>Cross-model-family capability ranking</strong> — self-preference makes the ranking systematically incomparable.</li>
+</ul>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;Pick the &#39;strongest&#39; LLM as judge and it will be objective.&quot; Stronger ≠ less biased; on some dimensions (e.g. verbosity bias — judging longer outputs as better) stronger LLMs can even be <strong>more</strong> biased, and cross-model-family self-preference does not vanish with capability gains. <strong>Dedicated judge calibration methodology</strong> (position randomization, cross-family judge ensembles, pairwise rather than absolute scoring) lives in the sister page <a href="https://ac.fzhiy.net/post-training-playbook/cheatsheet-reward-modeling-eval.html">reward-modeling-eval</a>.</p>
+</div>
+<p><strong>Follow-up:</strong> Is there a middle ground more reliable than LLM-judge but more flexible than execution-based? → <strong>Programmatic rules + LLM combinations</strong>: dimensions that can be ruled (step budget, forbidden-tool calls, action-format validity) use deterministic rules; dimensions that need &quot;semantic judgment&quot; (is this step directionally correct) use LLMs, but only in a statistical sense (mean + variance across multiple judges), never relying on any single judge for a single decision.</p>
+</details><h3 id="sec-15">L3 Deep</h3>
+<details class="qa"><summary>9. To design a contamination-resistant, reward-hacking-resistant, reproducible coding-agent eval, what elements are needed?</summary><p>A: Synthesizing §3–§5: ① <strong>anti-contamination</strong> — use problems after the training cutoff (time window) or a private hold-out, and audit contamination (memorization-recall test); ② <strong>anti-reward-hacking</strong> — use <strong>hidden extra unit tests + environment terminal-state checks</strong> (invisible to the agent) as the success criterion, preventing test-editing / empty-impl-passes-CI; audit the unit-test quality itself (avoid too-weak→false-positive, too-strict→false-negative); ③ <strong>reproducibility</strong> — fixed seed, public harness, report the unbiased pass@k estimate over <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples + interval + version date; ④ <strong>reliability</strong> — report <strong>pass^k</strong> not just pass@1, exposing multi-run stability; ⑤ <strong>living</strong> — rotate problems periodically to prevent long-term overfitting.</p>
+<p><strong>Follow-up:</strong> Why is &quot;hidden criteria&quot; the key to anti-hacking? → Once the agent can see the criterion (assertions / unit tests), it satisfies the criterion rather than truly solving (edit the test file, hard-code the expected output); hiding the criterion where the agent can&#39;t see it forces it to actually reach the goal state.</p>
+</details><details class="qa"><summary>10. What are the blind spots of outcome-only vs trajectory eval? Execution-based verifiers also false-negative/false-positive — how to mitigate?</summary><p>A: <strong>outcome-only</strong> blind spot — misses &quot;lucky guess / lucky path&quot; and reward hacking, and does not diagnose which step failed or give partial credit; <strong>trajectory</strong> blind spot — &quot;who judges each step&quot; is hard, rules miss coverage, LLM-judge carries position/self-preference. <strong>execution-based verifier false-negative/false-positive</strong>: tests too weak → a wrong solution sneaks through (false positive), too strict → a functionally correct solution is rejected (false negative, i.e. SWE-bench Verified&#39;s defective items). Mitigations: ① audit + strengthen the test suite (diverse inputs, hidden extra assertions); ② cross multiple criteria (unit tests + terminal-state check + human review of a subset when needed); ③ keep human-in-the-loop review for high-risk items; ④ handle verifier noise robustly in RL (don&#39;t amplify a single weak signal as truth).</p>
+<p><strong>Follow-up:</strong> Why is a weak verifier more dangerous in RL training than in static eval? → In static eval a weak verifier just mismeasures; in RL it is the <strong>reward source</strong>, and reward hacking is actively searched and amplified by the policy — the agent optimizes toward &quot;fooling the weak test&quot; rather than &quot;truly solving,&quot; getting worse as it trains.</p>
+</details><details class="qa"><summary>11. (Integrity) How do you cite safety numbers like a multi-agent injection-attack's "malicious-execution rate" or sabotage honestly?</summary><p>A: Carry the <strong>precise scope</strong>. That &quot;multi-agent orchestrator executes arbitrary malicious code&quot; number (a study reports <strong>58–90%</strong>, up to 100% in individual configs) is &quot;the <strong>attack success rate</strong> under a <strong>specific web injection attack</strong>,&quot; i.e. the <strong>success rate of a control-flow hijack</strong>, not &quot;agents misbehave at this rate in normal deployment.&quot; Sabotage is similar: Anthropic&#39;s sabotage evaluations are an <strong>evaluation framework</strong>; cite that it is a framework / specific setting, and if a circulated percentage can&#39;t be traced to the original setting, <strong>drop it</strong>. Principle: safety numbers are almost always bound to a <strong>threat model + experimental setting</strong>; citing one detached from the setting distorts it.</p>
+<p><strong>Follow-up:</strong> Why are safety-eval numbers more easily misquoted than capability-eval numbers? → Safety numbers are often upper bounds under &quot;worst case / a specific attack,&quot; naturally eye-catching and easy to quote out of context; and they are extremely sensitive to the <strong>threat model</strong> (change the attack surface and the conclusion changes), so quoting one detached from the setting almost inevitably inflates it.</p>
+</details><details class="qa"><summary>12. How does evaluation drive agent RL training? What are the key traps in the eval-signal → RL-reward pipeline?</summary><p>A: The standard pipeline is <strong>benchmark eval → reward design → RL training → re-eval</strong>. Every step can fail:</p>
+<ol>
+<li><strong>Same benchmark for both eval and reward</strong>: if the same verifier / test suite serves as both the RL reward and the final evaluation, the agent learns to &quot;game this specific verifier&quot; rather than truly solve. You must <strong>separate eval and train verifiers</strong> — the criterion used during training and the one used for final evaluation are two independent sets.</li>
+<li><strong>Weak verifier amplified in RL</strong> (echoing Q10): in static eval a weak verifier merely &quot;mismeasures&quot;; in RL it is the <strong>reward source</strong>, and reward hacking is actively searched and amplified by the policy — the agent optimizes toward &quot;fool the weak test&quot; (edit the test file, empty impl passes CI), getting worse as it trains.</li>
+<li><strong>Distribution shift</strong>: RL changes the policy → trajectory distribution changes → a verifier calibrated on pre-RL trajectories may no longer be valid post-RL — the agent enters behavior regions the verifier has never seen, and the false-positive/false-negative rate becomes unknown.</li>
+<li><strong>Proxy reward gap</strong>: the benchmark measures &quot;task success,&quot; but the RL reward is a <strong>proxy</strong> for task success (unit tests passing / terminal-state check passing / LLM-judge score). The gap &quot;success ↔ proxy&quot; is where reward hacking thrives — the agent optimizes the proxy, not the true objective.</li>
+<li><strong>RL runs contaminate the benchmark</strong>: if RL training rounds use benchmark problems for environment interaction (not just final eval), those problems cannot be reused — the agent has already trained on them; testing them again is contamination.</li>
+</ol>
+<p>Remedies: ① <strong>physically isolate</strong> eval and training problem sets (independently sampled, not a random split — agent-eval problems are naturally few, random splits are not safe enough); ② use <strong>training-dedicated hidden</strong> criteria for RL reward (verifiers independent of final eval, with zero overlap); final-eval criteria must be <strong>at least equally strong</strong> and fully held-out; ③ periodically spot-check agent trajectories manually for reward-hacking signals; ④ use multiple heterogeneous reward sources for cross-validation rather than relying on a single signal.</p>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;After RL training, run the benchmark once more and that&#39;s evaluation.&quot; If any part of that benchmark (problems / criteria / environment) was used during the RL training loop, it is already contaminated — what you are measuring is <strong>overfitting on the training set</strong>, not generalization.</p>
+</div>
+<p><strong>Follow-up:</strong> Are eval/train verifier split and eval/train problem split the same thing? → No. The problem split is &quot;which problems are for training vs evaluation.&quot; The verifier split is using <strong>different criteria</strong> — during training expose only a training-dedicated weak criterion (few visible unit tests), and during evaluation use a held-out full-strength criterion set (zero overlap with training criteria). Both layers are needed; one layer alone is insufficient.</p>
+</details><details class="qa"><summary>13. Beyond pass@k/pass^k, what metrics matter for production agent systems? Why might an agent with high academic benchmark scores perform poorly after deployment?</summary><p>A: Academic benchmark scores measure <strong>capability ceiling under ideal conditions</strong>. A production agent must also be assessed along five additional dimensions:</p>
+<table>
+<thead>
+<tr>
+<th>Metric dimension</th>
+<th>What it measures</th>
+<th>Why academic benchmarks don&#39;t test it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Per-task cost</strong></td>
+<td>token count × unit price / successful task (including retries)</td>
+<td>Benchmarks don&#39;t impose a budget constraint</td>
+</tr>
+<tr>
+<td><strong>Latency / steps</strong></td>
+<td>average steps to completion + P99 latency</td>
+<td>Academic evals don&#39;t penalize step count (most benchmarks)</td>
+</tr>
+<tr>
+<td><strong>Budget-constrained reliability</strong></td>
+<td>task success rate under a given token / time budget</td>
+<td>standard pass@k treats k attempts as free; does not reflect cost-effectiveness under token/time constraints</td>
+</tr>
+<tr>
+<td><strong>User-experience metrics</strong></td>
+<td>task abandonment rate, user satisfaction, human-handoff rate</td>
+<td>Benchmarks have no real users</td>
+</tr>
+<tr>
+<td><strong>Safety-incident rate</strong></td>
+<td>privilege escalations / injections / erroneous actions per task</td>
+<td>Capability benchmarks ignore safety</td>
+</tr>
+</tbody></table>
+<div class="callout callout-info"><div class="callout-label">提示 / Note</div>
+<p><strong>The &quot;last mile&quot; — high academic scores then deployment crash:</strong> a common cause is the agent carrying the academic benchmark&#39;s assumption of infinite retries + no budget into production — pass@k is high but every step is expensive (unbounded search / retries), and once a token budget or timeout is imposed in production, the real success rate collapses. <strong>Remedy:</strong> add a &quot;pass@k under budget&quot; curve to eval reports, treating cost as a first-class citizen.</p>
+</div>
+<div class="callout callout-bad"><div class="callout-label">陷阱 / Pitfall</div>
+<p><strong>Misconception:</strong> &quot;High benchmark score = deployable.&quot; A benchmark is <strong>necessary but not sufficient</strong> — it only proves &quot;can do it under ideal conditions,&quot; not &quot;can do it stably under budget / safety / UX constraints.&quot; Before deployment, run at least one round of <strong>shadow deployment</strong> (a parallel shadow deploy where the agent executes on real traffic but doesn&#39;t take over), using the real distribution as the final gate.</p>
+</div>
+<p><strong>Follow-up:</strong> How is shadow deployment done concretely, and what do you watch? → Deploy the agent in an <strong>isolated environment with the same distribution as production</strong> (production traffic mirroring / production snapshot replay / dry-run mode), with <strong>writes routed through no-op / sandbox adapters so there are no real side effects</strong> (no payments triggered, no external messages sent, not visible to real users); run silently for days to weeks, tracking:</p>
+<ul>
+<li><strong>Shadow metrics</strong> (measurable offline): real-distribution task success rate vs academic benchmark gap, per-task cost distribution, safety red-line trigger rate, latency/step distribution</li>
+<li><strong>Live metrics</strong> (require canary / A-B / assisted-human deployment to measure): user abandonment rate, human-handoff rate, satisfaction — these are NOT measurable in shadow mode and must be called out separately</li>
+</ul>
+<p>The gap between these numbers and the academic benchmark scores is the chasm between &quot;can solve problems&quot; and &quot;can do the job.&quot; Before shadow deployment, confirm: privacy/PII compliance (whether mirrored traffic contains sensitive data), write-operation isolation completeness, and that an approval process is in place.</p>
+</details><hr>
+<h2 id="sec-16">References</h2>
+<blockquote>
+<p>All are load-bearing methods / primary sources, web-checked item by item (title + arXiv ID / official URL; the 2026 SWE-bench Verified retirement and Pro scores were re-checked 2026-06). Click a superscript to jump, click ↩ to return.</p>
+</blockquote>
+<ol>
+<li id="ref-1">Jimenez et al. <em>SWE-bench: Can Language Models Resolve Real-World GitHub Issues?</em> ICLR 2024. <a href="https://arxiv.org/abs/2310.06770">arXiv:2310.06770</a> — real code-fixing eval. <a href="#fnref-1">↩</a></li>
+<li id="ref-2">OpenAI. <em>Introducing SWE-bench Verified</em>. 2024-08. <a href="https://openai.com/index/introducing-swe-bench-verified/">openai.com</a> — 500-problem human-verified subset. <a href="#fnref-2">↩</a></li>
+<li id="ref-3">OpenAI. <em>Why we no longer evaluate SWE-bench Verified</em>. 2026-02-23. <a href="https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/">openai.com</a> — retired due to saturation+contamination; 138-problem audit ~59% tests defective. <a href="#fnref-3">↩</a></li>
+<li id="ref-4">Scale AI. <em>SWE-bench Pro Leaderboard</em>. 2025. <a href="https://labs.scale.com/leaderboard/swe_bench_pro_public">labs.scale.com</a> — contamination-resistant SWE-bench variant (public/private/commercial shards). <a href="#fnref-4">↩</a></li>
+<li id="ref-5">Zhou et al. <em>WebArena: A Realistic Web Environment for Building Autonomous Agents</em>. ICLR 2024. <a href="https://arxiv.org/abs/2307.13854">arXiv:2307.13854</a> — self-hosted reproducible web eval. <a href="#fnref-5">↩</a></li>
+<li id="ref-6">Xie et al. <em>OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments</em>. NeurIPS 2024. <a href="https://arxiv.org/abs/2404.07972">arXiv:2404.07972</a> — computer-use terminal-state checking. <a href="#fnref-6">↩</a></li>
+<li id="ref-7">Mialon et al. <em>GAIA: a benchmark for General AI Assistants</em>. ICLR 2024. <a href="https://arxiv.org/abs/2311.12983">arXiv:2311.12983</a> — general assistant, uniquely judgeable answers. <a href="#fnref-7">↩</a></li>
+<li id="ref-8">Yao et al. <em>τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains</em>. 2024. <a href="https://arxiv.org/abs/2406.12045">arXiv:2406.12045</a> — multi-turn tool-user + pass^k reliability. <a href="#fnref-8">↩</a></li>
+<li id="ref-9">Chan et al. <em>MLE-bench: Evaluating Machine Learning Agents on Machine Learning Engineering</em>. ICLR 2025. <a href="https://arxiv.org/abs/2410.07095">arXiv:2410.07095</a> — Kaggle ML engineering, medal rate. <a href="#fnref-9">↩</a></li>
+<li id="ref-10">Jain et al. <em>LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code</em>. ICLR 2025. <a href="https://arxiv.org/abs/2403.07974">arXiv:2403.07974</a> — release-window anti-contamination. <a href="#fnref-10">↩</a></li>
+<li id="ref-11">Chen et al. <em>Evaluating Large Language Models Trained on Code</em>. 2021. <a href="https://arxiv.org/abs/2107.03374">arXiv:2107.03374</a> — HumanEval + unbiased pass@k. <a href="#fnref-11">↩</a></li>
+<li id="ref-12">Triedman, Jha, Shmatikov. <em>Multi-Agent Systems Execute Arbitrary Malicious Code</em>. 2025. <a href="https://arxiv.org/abs/2503.12188">arXiv:2503.12188</a> — under specific injection attacks, multi-agent orchestrators execute malicious code at 58–90% ASR (scope-locked). <a href="#fnref-12">↩</a></li>
+<li id="ref-13">Anthropic (Benton et al.). <em>Sabotage Evaluations for Frontier Models</em>. 2024. <a href="https://arxiv.org/abs/2410.21514">arXiv:2410.21514</a> — sabotage/sandbagging eval framework (this page cites the framework only). <a href="#fnref-13">↩</a></li>
+<li id="ref-14">Greshake et al. <em>Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection</em>. 2023. <a href="https://arxiv.org/abs/2302.12173">arXiv:2302.12173</a> — indirect prompt injection. <a href="#fnref-14">↩</a></li>
+</ol>
+</main>
+</div>
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('nav.toc a'));
+  if(!links.length||!('IntersectionObserver' in window))return;
+  var byId={};
+  links.forEach(function(a){byId[a.getAttribute('href').replace(/^#/,'')]=a;});
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(!e.isIntersecting)return;
+      links.forEach(function(l){l.classList.remove('active');});
+      var a=byId[e.target.id];if(a)a.classList.add('active');
+    });
+  },{rootMargin:'-12% 0px -75% 0px'});
+  links.forEach(function(a){var el=document.getElementById(a.getAttribute('href').replace(/^#/,''));if(el)io.observe(el);});
+})();
+(function(){
+  // Print degradation: force every collapsed <details> open while printing, restore after.
+  var stash=[];
+  window.addEventListener('beforeprint',function(){
+    stash=[];
+    document.querySelectorAll('details:not([open])').forEach(function(d){stash.push(d);d.open=true;});
+  });
+  window.addEventListener('afterprint',function(){
+    stash.forEach(function(d){if(d.isConnected)d.open=false;});stash=[];
+  });
+})();
+</script>
+</body>
+</html>
