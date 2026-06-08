@@ -11,7 +11,7 @@
 - **prompt injection 是 agent 头号安全威胁**:间接注入(通过网页/邮件/文档里的恶意指令)比直接注入(用户 prompt 里)更难防;MCP 协议本身**不防注入**,安全责任在 host 侧。
 - **工具护栏 = 纵深防御的最内层**:权限最小化(只给完成任务的最小工具集) > action validation(执行前校验) > rate limiting(频率/预算上限) > human-in-the-loop(高风险操作人工确认)。
 - **轨迹级监控 ≠ 单步审计**:看的是「整条轨迹是否正常」——有没有越权动作序列、有没有异常工具调用模式、有没有偏离预期分布;单步合法 ≠ 轨迹安全。
-- **可扩展监督**(Deliberative Alignment / Constitutional Classifiers / Best-of-N 防 jailbreak)把 safety 从「人来审」变成「可自动化」,但各有盲区:Deliberative Alignment 依赖模型自身推理质量,Constitutional Classifiers 受限于 constitution 覆盖面。
+- **可扩展监督**(Deliberative Alignment / Constitutional Classifiers / Best-of-N 自动化红队)把 safety 从「人来审」变成「可自动化」,但各有盲区:Deliberative Alignment 依赖模型自身推理质量,Constitutional Classifiers 受限于 constitution 覆盖面。
 - **sabotage / sandbagging 评测仍在框架阶段**:Anthropic 2024 提出四类 sabotage 评测(code sabotage / sandbagging / undermining oversight / decision sabotage),但不代表模型「会」主动 sabotage——评测框架 ≠ 存在性声明。
 - **多 agent 系统放大安全风险**:agent 之间的信任边界模糊、编排器被注入后所有子 agent 受控、信息流跨 agent 传播难追踪。
 
@@ -309,7 +309,7 @@ sandbagging 直接冲击 agent 评测的有效性(与 [agent-evaluation](cheatsh
 <li id="ref-2">Triedman, Jha, Shmatikov. <em>Multi-Agent Systems Execute Arbitrary Malicious Code</em>. 2025. <a href="https://arxiv.org/abs/2503.12188">arXiv:2503.12188</a> — 多 agent 编排器 web 注入攻击成功率(scope-locked). <a href="#fnref-2">↩</a></li>
 <li id="ref-3">Guan et al. <em>Deliberative Alignment: Reasoning Enables Safer Language Models</em>. 2024. <a href="https://arxiv.org/abs/2412.16339">arXiv:2412.16339</a> — o1 推理时 safety deliberation;越狱抵抗显著优于 GPT-4o. <a href="#fnref-3">↩</a></li>
 <li id="ref-4">Anthropic. <em>Constitutional Classifiers: Defending against Universal Jailbreaks</em>. 2025. <a href="https://arxiv.org/abs/2501.18837">arXiv:2501.18837</a> — 基于 constitution 的合成数据 + 对抗训练护栏. <a href="#fnref-4">↩</a></li>
-<li id="ref-5">Hughes et al. <em>Best-of-N Jailbreaking</em>. 2024. <a href="https://arxiv.org/abs/2412.03556">arXiv:2412.03556</a> — Best-of-N 攻防对称性;防御可降 GPT-4o ASR ~89%. <a href="#fnref-5">↩</a></li>
+<li id="ref-5">Hughes et al. <em>Best-of-N Jailbreaking</em>. 2024. <a href="https://arxiv.org/abs/2412.03556">arXiv:2412.03556</a> — 随机扰动+重复采样越狱攻击;GPT-4o ASR ~89%(10k 增强 prompt). <a href="#fnref-5">↩</a></li>
 <li id="ref-6">Russinovich et al. <em>Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack</em>. 2024. <a href="https://arxiv.org/abs/2404.01833">arXiv:2404.01833</a> — 多轮逐步升级越狱. <a href="#fnref-6">↩</a></li>
 <li id="ref-7">Anthropic (Benton et al.). <em>Sabotage Evaluations for Frontier Models</em>. 2024. <a href="https://arxiv.org/abs/2410.21514">arXiv:2410.21514</a> — sabotage/sandbagging 评测框架(本页只描述框架,不引具体百分比). <a href="#fnref-7">↩</a></li>
 </ol>
