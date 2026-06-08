@@ -9,9 +9,9 @@
 
 ## ⚠️ 诚信声明 / Honesty disclaimer
 
-这是 **学习笔记**,**不是作者的研究成果**。本手册整理的是 agent 后训练前沿——其中**只有「持续 / 终身学习」**与作者已发表工作(**联邦持续微调** Fed-TaLoRA)真正相关;**agentic RL、self-evolving 等是作者正在学习 / 跟踪的前沿,并非已发表研究**。作者的一作论文见[学术主页](https://ac.fzhiy.net/)。
+这是 **学习笔记**,**不是作者的研究成果**。本手册整理的是 agent 后训练前沿——所有内容均为公开论文的学习整理,不涉及作者个人研究工作。作者的一作论文见[学术主页](https://ac.fzhiy.net/)。
 
-> These are **study notes, not the author's research**. Of the topics here, only *continual / lifelong learning* overlaps the author's published work (federated continual fine-tuning); *agentic RL* and *self-evolving agents* are frontiers being studied, not claimed research.
+> These are **study notes, not the author's research**. All content is organized from published papers; none of the author's own research work is included here.
 
 ## 🚀 快速开始 / Quick start
 
