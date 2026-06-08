@@ -16,7 +16,7 @@
 | 4 | Agentic RL Infrastructure | [题解](cheatsheet-agentic-rl-infra.html) | — | ✅ |
 | 5 | Continual & Lifelong Learning | [题解](cheatsheet-continual-and-lifelong-learning.html) | [ewc-replay](drill-ewc-replay.html) | ✅ |
 | 6 | Self-improving LLMs | [题解](cheatsheet-self-improving-llms.html) | [self-refine-loop](drill-self-refine-loop.html) | ✅ |
-| 🚧 | 规划中 / Planned | agent-safety | — | 规划 |
+| 7 | Agent Safety & Alignment | [题解](cheatsheet-agent-safety.html) | — | ✅ |
 
 ## 0 · 前置 / Prereq
 - 后训练主线(见姊妹仓库):PPO / GRPO / RLVR、reward modeling、PEFT。
@@ -35,7 +35,7 @@
 
 ## 4 · Agentic RL Infrastructure
 - [agentic-rl-infra](cheatsheet-agentic-rl-infra.html) — agent RL 系统工程:三池架构(Rollout/Reward/Training)、训练栈对比(verl/OpenRLHF/AReaL/SkyRL-Agent)、环境管理(沙盒池/健康检查/容错)、多轮 KV cache 显存、轨迹数据管线(Parquet 列存)、成本估算。
-- 衔接:承 [agentic-and-long-horizon-rl](cheatsheet-agentic-and-long-horizon-rl.html) 的算法原理,启规划中的 agent-safety 篇。
+- 衔接:承 [agentic-and-long-horizon-rl](cheatsheet-agentic-and-long-horizon-rl.html) 的算法原理,也为 [agent-safety](cheatsheet-agent-safety.html) 篇的工具护栏与轨迹监控做 infra 铺垫。
 
 ## 5 · Continual & Lifelong Learning
 - [continual-and-lifelong-learning](cheatsheet-continual-and-lifelong-learning.html) — 灾难性遗忘、正则(EWC/SI/MAS)/ replay(GEM/A-GEM/DER)/ 参数隔离、AA/BWT/FWT、continual alignment / alignment tax。
@@ -44,6 +44,10 @@
 ## 6 · Self-improving LLMs
 - [self-improving-llms](cheatsheet-self-improving-llms.html) — STaR / ReST / RFT、self-rewarding、self-play(SPIN)、RLAIF、反思(Reflexion/Self-Refine);自改进闭环与崩溃模式。
 - 手撕:[self-refine-loop](drill-self-refine-loop.html) — 生成→批评→修订迭代,验证分数单调。
+
+## 7 · Agent Safety & Alignment
+- [agent-safety](cheatsheet-agent-safety.html) — agent 安全纵深防御:三层威胁模型(注入/内部失效/战略欺骗) · prompt injection & 工具投毒(间接注入/MCP 安全模型/多 agent 级联) · 轨迹级监控 · 可扩展监督(Deliberative Alignment/Constitutional Classifiers/Best-of-N/Crescendo) · 工具护栏 · 多 agent 信任边界 · sabotage/sandbagging。
+- 衔接:承 [agent-evaluation](cheatsheet-agent-evaluation.html) §6 安全评测(怎么测),这里讲怎么防;与 [self-improving-llms](cheatsheet-self-improving-llms.html) §6 reward hacking 区分(sabotage=刻意做坏,reward hacking=合法拿高分)。
 
 ---
 
