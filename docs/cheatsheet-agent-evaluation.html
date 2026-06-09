@@ -312,6 +312,42 @@
 <div class="callout callout-warn"><div class="callout-label">注意 / Caution</div>
 <p><strong>可复现红线:</strong> 只报「pass@1 = 41%」而不报 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span>、温度、seed、harness,<strong>别人无法复现</strong>。负责任的报法:固定 seed + 报 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> 次采样的均值 ± 区间 + harness 版本。技报里看到不带这些的单个数字,默认它有方差噪声。</p>
 </div>
+<p><strong>from-scratch 实现</strong>(agent 评测核心指标:pass@k 无偏估计 + pass^k 可靠性):</p>
+<details class="code-fold"><summary>35 行 / lines</summary><pre><code class="hljs language-python"><span class="hljs-keyword">import</span> numpy <span class="hljs-keyword">as</span> np
+<span class="hljs-keyword">from</span> collections <span class="hljs-keyword">import</span> defaultdict
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">unbiased_pass_at_k</span>(<span class="hljs-params">n, c, k</span>):
+    <span class="hljs-string">&quot;&quot;&quot;每题 n 次采样、c 次正确,至少 1 次对的概率(Chen et al. 的无偏估计)。
+    公式:1 - C(n-c, k)/C(n, k),数值稳定实现。&quot;&quot;&quot;</span>
+    <span class="hljs-keyword">if</span> n - c &lt; k:
+        <span class="hljs-keyword">return</span> <span class="hljs-number">1.0</span>
+    <span class="hljs-keyword">return</span> <span class="hljs-number">1.0</span> - np.prod(<span class="hljs-number">1.0</span> - k / np.arange(n - c + <span class="hljs-number">1</span>, n + <span class="hljs-number">1</span>))
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">compute_agent_metrics</span>(<span class="hljs-params">results, k=<span class="hljs-number">5</span></span>):
+    <span class="hljs-string">&quot;&quot;&quot;results: list[dict],每条={success: bool, traj_len: int, traj_cost: float}.
+    返回 pass@k(能力上界), pass^k(可靠性), 平均步数/成本。&quot;&quot;&quot;</span>
+    n = <span class="hljs-built_in">len</span>(results)
+    c = <span class="hljs-built_in">sum</span>(<span class="hljs-number">1</span> <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results <span class="hljs-keyword">if</span> r[<span class="hljs-string">&quot;success&quot;</span>])
+    <span class="hljs-comment"># pass@k:至少 1 次成功的能力上界</span>
+    pass_at_k = unbiased_pass_at_k(n, c, k) <span class="hljs-keyword">if</span> n &gt;= k <span class="hljs-keyword">else</span> <span class="hljs-built_in">float</span>(<span class="hljs-string">&#x27;nan&#x27;</span>)
+    <span class="hljs-comment"># pass^k:连续 k 次全成功的可靠性(实际部署看的指标)</span>
+    <span class="hljs-comment"># 从顺序结果用滑动窗估计:所有长度为 k 的窗口里全成功的比例</span>
+    successes = [r[<span class="hljs-string">&quot;success&quot;</span>] <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results]
+    windows_all_pass = <span class="hljs-built_in">sum</span>(
+        <span class="hljs-built_in">all</span>(successes[i:i+k]) <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-built_in">len</span>(successes) - k + <span class="hljs-number">1</span>)
+    )
+    pass_pow_k = windows_all_pass / <span class="hljs-built_in">max</span>(<span class="hljs-built_in">len</span>(successes) - k + <span class="hljs-number">1</span>, <span class="hljs-number">1</span>)
+    <span class="hljs-comment"># 轨迹效率</span>
+    avg_steps = np.mean([r[<span class="hljs-string">&quot;traj_len&quot;</span>] <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results])
+    avg_cost  = np.mean([r[<span class="hljs-string">&quot;traj_cost&quot;</span>] <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results])
+    <span class="hljs-keyword">return</span> {<span class="hljs-string">&quot;pass@k&quot;</span>: pass_at_k, <span class="hljs-string">&quot;pass^k&quot;</span>: pass_pow_k,
+            <span class="hljs-string">&quot;avg_steps&quot;</span>: avg_steps, <span class="hljs-string">&quot;avg_cost&quot;</span>: avg_cost, <span class="hljs-string">&quot;success_rate&quot;</span>: c/n}
+
+<span class="hljs-comment"># 面试关键点:</span>
+<span class="hljs-comment"># ① pass@k 是&quot;能力上限&quot;(有 oracle 验证器时能拿到的最好),pass^k 是&quot;可靠性&quot;</span>
+<span class="hljs-comment"># ② agent 部署看 pass^k——k 次跑至少 1 次闯祸就不可用(见 τ-bench)</span>
+<span class="hljs-comment"># ③ 轨迹效率(步数/成本)与成功率一起报,防&quot;绕了 20 步成功&quot;被等同于&quot;3 步成功&quot;</span>
+</code></pre></details>
 <h2 id="sec-10">5. 轨迹评测 vs 结果评测 / Trajectory vs Outcome eval</h2>
 <table>
 <thead>

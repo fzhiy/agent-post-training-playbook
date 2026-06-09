@@ -237,6 +237,52 @@ Final Answer: …
 <div class="callout callout-warn"><div class="callout-label">注意 / Caution</div>
 <p><strong>stop-token footgun:</strong> at inference you MUST set <code>Observation:</code> as a stop sequence. Otherwise the model will <strong>continue generating an <code>Observation: …</code> itself</strong> (hallucinating the tool return) instead of stopping to wait for the environment to inject the real result — this is the most common ReAct production bug. Hands-on: <a href="drill-react-tool-call-loop.html">react-tool-call-loop</a>.</p>
 </div>
+<p><strong>From-scratch implementation</strong> (interview hand-tear standard: minimal ReAct loop + stop-sequence + environment-injected observations):</p>
+<details class="code-fold"><summary>45 行 / lines</summary><pre><code class="hljs language-python"><span class="hljs-keyword">import</span> re
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">react_loop</span>(<span class="hljs-params">prompt, tools, llm_generate, max_steps=<span class="hljs-number">10</span></span>):
+    <span class="hljs-string">&quot;&quot;&quot;Minimal ReAct loop: Thought → Action → Observation → loop.
+    llm_generate(messages, stop)-&gt;str: calls the LLM, stops immediately on stop sequences.
+    tools: dict[str, callable], tool_name→executor (Obs from the environment, not the model).
+    Returns (final_answer, trajectory).&quot;&quot;&quot;</span>
+    messages = [{<span class="hljs-string">&quot;role&quot;</span>: <span class="hljs-string">&quot;user&quot;</span>, <span class="hljs-string">&quot;content&quot;</span>: prompt}]
+    trajectory = []
+
+    <span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(max_steps):
+        <span class="hljs-comment"># 1. Reason + act; stop=[&quot;Observation:&quot;] prevents hallucinated tool returns (model must stop)</span>
+        raw = llm_generate(messages, stop=[<span class="hljs-string">&quot;Observation:&quot;</span>])
+        trajectory.append(raw)
+
+        <span class="hljs-comment"># 2. Check for final answer</span>
+        final = re.search(<span class="hljs-string">r&quot;Final Answer:\s*(.*)&quot;</span>, raw, re.S)
+        <span class="hljs-keyword">if</span> final:
+            <span class="hljs-keyword">return</span> final.group(<span class="hljs-number">1</span>).strip(), trajectory
+
+        <span class="hljs-comment"># 3. Parse Action and Action Input</span>
+        action = re.search(<span class="hljs-string">r&quot;Action:\s*(\S+)&quot;</span>, raw)
+        action_input = re.search(<span class="hljs-string">r&quot;Action Input:\s*(.*)&quot;</span>, raw, re.S)
+        <span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> action:
+            obs = <span class="hljs-string">&quot;Error: no Action found. Please output &#x27;Action: &lt;tool_name&gt;&#x27; then &#x27;Action Input: &lt;args&gt;&#x27;.&quot;</span>
+        <span class="hljs-keyword">elif</span> action.group(<span class="hljs-number">1</span>) <span class="hljs-keyword">not</span> <span class="hljs-keyword">in</span> tools:
+            obs = <span class="hljs-string">f&quot;Error: unknown tool &#x27;<span class="hljs-subst">{action.group(<span class="hljs-number">1</span>)}</span>&#x27;. Available: <span class="hljs-subst">{<span class="hljs-built_in">list</span>(tools.keys())}</span>&quot;</span>
+        <span class="hljs-keyword">else</span>:
+            <span class="hljs-keyword">try</span>:
+                result = tools[action.group(<span class="hljs-number">1</span>)](action_input.group(<span class="hljs-number">1</span>).strip())
+                obs = <span class="hljs-built_in">str</span>(result)                               <span class="hljs-comment"># Observation from environment/tool</span>
+            <span class="hljs-keyword">except</span> Exception <span class="hljs-keyword">as</span> e:
+                obs = <span class="hljs-string">f&quot;Tool error: <span class="hljs-subst">{e}</span>&quot;</span>
+
+        <span class="hljs-comment"># 4. Inject the real Observation back into context (new user/system message, NOT assistant continuation)</span>
+        messages.append({<span class="hljs-string">&quot;role&quot;</span>: <span class="hljs-string">&quot;assistant&quot;</span>, <span class="hljs-string">&quot;content&quot;</span>: raw})
+        messages.append({<span class="hljs-string">&quot;role&quot;</span>: <span class="hljs-string">&quot;user&quot;</span>,   <span class="hljs-string">&quot;content&quot;</span>: <span class="hljs-string">f&quot;Observation: <span class="hljs-subst">{obs}</span>&quot;</span>})
+
+    <span class="hljs-keyword">return</span> <span class="hljs-literal">None</span>, trajectory                                     <span class="hljs-comment"># step budget exhausted</span>
+<span class="hljs-comment"># Interview key points:</span>
+<span class="hljs-comment"># ① stop=[&quot;Observation:&quot;] prevents hallucination — model stops, env injects real Obs</span>
+<span class="hljs-comment"># ② Observation is a new message (role=user/system), not an assistant continuation</span>
+<span class="hljs-comment"># ③ Action/Action Input parsed with regex; production would use JSON or structured output</span>
+<span class="hljs-comment"># ④ Tool execution wrapped in try/except + unknown-tool fallback to prevent one-step kills</span>
+</code></pre></details>
 <h2 id="sec-3">3. Planning: Plan-and-Execute vs ReAct</h2>
 <ul>
 <li><strong>ReAct</strong>: per-step decision (reactive) — decides the next action from the current observation each step; flexible but no global view.</li>

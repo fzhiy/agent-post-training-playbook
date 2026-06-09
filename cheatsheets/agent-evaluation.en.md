@@ -105,6 +105,37 @@ Intuition: $\binom{n-c}{k}/\binom{n}{k}$ is the probability of "drawing $k$ samp
 
 > ⚠️ **Reproducibility red line:** reporting only "pass@1 = 41%" without $n$, temperature, seed, harness means **nobody can reproduce it**. The responsible report: fixed seed + the mean ± interval over $n$ samples + the harness version. A lone number without these defaults to noisy variance.
 
+**From-scratch implementation** (core agent evaluation metrics: unbiased pass@k + pass^k reliability):
+
+```python
+import numpy as np
+
+def unbiased_pass_at_k(n, c, k):
+    """n samples, c correct — unbiased probability of ≥1 correct in k draws (Chen et al.)."""
+    if n - c < k:
+        return 1.0
+    return 1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1))
+
+def compute_agent_metrics(results, k=5):
+    """results: list[dict] with {success: bool, traj_len: int, traj_cost: float}.
+    Returns pass@k (capability ceiling), pass^k (reliability), avg steps/cost."""
+    n = len(results)
+    c = sum(1 for r in results if r["success"])
+    pass_at_k = unbiased_pass_at_k(n, c, k) if n >= k else float('nan')
+    # pass^k: sliding-window estimate — fraction of length-k windows where all succeeded
+    successes = [r["success"] for r in results]
+    windows_all_pass = sum(
+        all(successes[i:i+k]) for i in range(len(successes) - k + 1)
+    )
+    pass_pow_k = windows_all_pass / max(len(successes) - k + 1, 1)
+    avg_steps = np.mean([r["traj_len"] for r in results])
+    avg_cost  = np.mean([r["traj_cost"] for r in results])
+    return {"pass@k": pass_at_k, "pass^k": pass_pow_k,
+            "avg_steps": avg_steps, "avg_cost": avg_cost, "success_rate": c/n}
+```
+# Key: ① pass@k = capability ceiling; pass^k = reliability (what deployment cares about)
+# ② Report trajectory efficiency (steps/cost) alongside success rate — "20 steps to succeed" ≠ "3 steps"
+
 ## 5. Trajectory vs Outcome eval
 
 | | outcome-only (execution-based) | trajectory (process) |

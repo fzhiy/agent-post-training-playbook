@@ -66,6 +66,55 @@ Final Answer: …
 
 > ⚠️ **stop-token footgun:** 推理时必须把 `Observation:` 设为 stop sequence。否则模型会**自己接着生成一段 `Observation: …`**(幻觉工具返回),而不是停下来等环境注入真实结果——这是 ReAct 落地最常见的 bug。手撕见 [react-tool-call-loop](drill-react-tool-call-loop.html)。
 
+**from-scratch 实现**(面试手撕标准:ReAct 最小闭环 + stop-sequence + observation 由环境注入):
+
+```python
+import re
+
+def react_loop(prompt, tools, llm_generate, max_steps=10):
+    """ReAct 最小闭环: Thought → Action → Observation → loop。
+    llm_generate(messages, stop)->str:调 LLM,遇 stop 序列立即停止解码。
+    tools: dict[str, callable],tool_name→执行函数(工具返回 Obs 由环境产生,不模型生成)。
+    返回 (final_answer, trajectory)。"""
+    messages = [{"role": "user", "content": prompt}]
+    trajectory = []
+
+    for _ in range(max_steps):
+        # 1. 推理+动作选择; stop=["Observation:"] 防幻觉工具返回(模型必须停,让环境注入)
+        raw = llm_generate(messages, stop=["Observation:"])
+        trajectory.append(raw)
+
+        # 2. 检查是否给出最终答案
+        final = re.search(r"Final Answer:\s*(.*)", raw, re.S)
+        if final:
+            return final.group(1).strip(), trajectory
+
+        # 3. 解析 Action 与 Action Input
+        action = re.search(r"Action:\s*(\S+)", raw)
+        action_input = re.search(r"Action Input:\s*(.*)", raw, re.S)
+        if not action:
+            obs = "Error: no Action found. Please output 'Action: <tool_name>' then 'Action Input: <args>'."
+        elif action.group(1) not in tools:
+            obs = f"Error: unknown tool '{action.group(1)}'. Available: {list(tools.keys())}"
+        else:
+            try:
+                result = tools[action.group(1)](action_input.group(1).strip())
+                obs = str(result)                               # Observation 由环境/工具产生
+            except Exception as e:
+                obs = f"Tool error: {e}"
+
+        # 4. 把真实 Observation 注回上下文(不是续写 Token,而是作为新的 user/系统消息)
+        messages.append({"role": "assistant", "content": raw})
+        messages.append({"role": "user",   "content": f"Observation: {obs}"})
+
+    return None, trajectory                                     # 超步数,未完成
+# 面试关键点:
+# ① stop=["Observation:"] 防幻觉——模型停,Obs 由环境注入
+# ② Observation 是新的消息(role=user/system),不是 assistant 续写
+# ③ Action/Action Input 解析用正则,生产可用 JSON 解析或 structured output
+# ④ 工具执行 try/except + unknown tool 兜底,防一步错全链崩
+```
+
 ## 3. 规划 / Planning:Plan-and-Execute vs ReAct
 
 - **ReAct**:逐步决策(reactive)——每步看当前观测再决定下一动作,灵活但无全局视野。

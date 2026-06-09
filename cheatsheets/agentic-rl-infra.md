@@ -83,6 +83,70 @@ agent RL 训练的**核心心智模型**:三个可独立扩缩的异步池,各�
 
 > 💡 **三池各自最适硬件不同**:Rollout 池重推理吞吐(高 GPU 利用率 + 大量 CPU 环境 worker);Reward 池几乎纯 CPU;Training 池重梯度计算(高 GPU 显存)。**分离部署**比 hybrid 更贵但各自可独立扩缩,适合生产级规模。
 
+**from-scratch 实现**(三池异步 rollout 骨架,面试手撕标准):
+
+```python
+import threading, queue, time
+from concurrent.futures import ThreadPoolExecutor
+
+class AsyncRolloutPipeline:
+    """异步三池骨架:Rollout worker → Reward worker → Trajectory buffer → Training."""
+    def __init__(self, env_factory, reward_fn, policy_model, buffer_size=1000):
+        self.env = env_factory                            # 环境工厂(每个 worker 独立实例)
+        self.reward_fn = reward_fn                        # reward 计算(环境执行/判题/校验)
+        self.model = policy_model                         # 当前策略(定期从 Training 池同步)
+        self.buffer = queue.Queue(maxsize=buffer_size)    # 轨迹缓冲区(解耦推理与训练)
+
+    def rollout_worker(self, prompts, num_envs=8):
+        """Rollout 池:并行与交互式环境采样生成轨迹。GPU 推理 + CPU 环境执行交叉。"""
+        def run_one(prompt):
+            env = self.env()                              # 每 worker 独立环境实例
+            obs, traj = env.reset(prompt), []
+            for _ in range(max_steps := 50):
+                # 1. 推理(在 GPU 上):当前策略给定历史→下一动作
+                action = self.model.generate(obs["history"])
+                # 2. 执行(在 CPU 上):动作送入环境,环境返回新观测与局部奖励
+                next_obs, done = env.step(action)
+                traj.append({"obs": obs, "action": action, "done": done})
+                if done: break
+                obs = next_obs
+            return traj
+
+        with ThreadPoolExecutor(max_workers=num_envs) as ex:
+            trajectories = list(ex.map(run_one, prompts))
+        return trajectories
+
+    def reward_worker(self, trajectories):
+        """Reward 池:对每条轨迹计算最终 reward(环境终态校验/判题)。"""
+        for traj in trajectories:
+            final_state = traj[-1]["obs"]                 # 轨迹终态
+            traj_reward = self.reward_fn(final_state)     # 纯 CPU 计算(跑单测/查网页)
+            traj.append({"reward": traj_reward})
+        return trajectories
+
+    def train_step(self, batch):
+        """Training 池:从 buffer 取轨迹→算 loss→梯度更新(在这里调用,与 rollout 异步)。"""
+        # 实际实现:从 self.buffer 取 batch → compute PPO/GRPO loss → optimizer.step()
+        pass                                              # 训练细节见 agentic-RL 篇代码
+
+    def run_async(self, prompts, sync_interval=10):
+        """启动异步循环:rollout+reward 持续产出→喂 buffer→train 从 buffer 消费。"""
+        def producer():
+            while True:
+                trajs = self.rollout_worker(prompts)
+                trajs = self.reward_worker(trajs)
+                for t in trajs:
+                    self.buffer.put(t)                    # 解耦:rollout 产出速度 ≠ train 消费速度
+                time.sleep(0.1)
+        threading.Thread(target=producer, daemon=True).start()
+        # Training 端(另一线程/进程)从 buffer 取 batch → train_step
+# 面试关键点:
+# ① 三池异步解耦: rollout/reward/training 各自独立,不互相阻塞
+# ② 环境是瓶颈(source):环境步数×单步延迟 ≫ 推理延迟时,同步=GPU 空等
+# ③ ThreadPoolExecutor 模拟多环境并行;生产会用 Ray actor / k8s pod
+# ④ Buffer 解耦: rollout 产出速度波动不影响 training 消费节奏
+```
+
 ## 3. 训练栈对比 / Training stack comparison
 
 ### 3.1 verl (Volcano Engine)

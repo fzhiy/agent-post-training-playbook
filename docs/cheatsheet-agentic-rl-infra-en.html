@@ -261,6 +261,50 @@
 <div class="callout callout-info"><div class="callout-label">提示 / Note</div>
 <p><strong>Each pool has a different optimal hardware type</strong>: the Rollout Pool cares about inference throughput (high GPU utilization + many CPU env workers); the Reward Pool is almost pure CPU; the Training Pool cares about gradient computation (high GPU memory). <strong>Separated deployment</strong> is more expensive than hybrid but each pool scales independently — suitable for production scale.</p>
 </div>
+<p><strong>From-scratch implementation</strong> (async three-pool rollout skeleton, interview hand-tear standard):</p>
+<details class="code-fold"><summary>41 行 / lines</summary><pre><code class="hljs language-python"><span class="hljs-keyword">import</span> threading, queue, time
+<span class="hljs-keyword">from</span> concurrent.futures <span class="hljs-keyword">import</span> ThreadPoolExecutor
+
+<span class="hljs-keyword">class</span> <span class="hljs-title class_">AsyncRolloutPipeline</span>:
+    <span class="hljs-string">&quot;&quot;&quot;Async three-pool skeleton: Rollout worker → Reward worker → Trajectory buffer → Training.&quot;&quot;&quot;</span>
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">__init__</span>(<span class="hljs-params">self, env_factory, reward_fn, policy_model, buffer_size=<span class="hljs-number">1000</span></span>):
+        <span class="hljs-variable language_">self</span>.env = env_factory
+        <span class="hljs-variable language_">self</span>.reward_fn = reward_fn
+        <span class="hljs-variable language_">self</span>.model = policy_model                         <span class="hljs-comment"># synced from Training pool periodically</span>
+        <span class="hljs-variable language_">self</span>.buffer = queue.Queue(maxsize=buffer_size)
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">rollout_worker</span>(<span class="hljs-params">self, prompts, num_envs=<span class="hljs-number">8</span></span>):
+        <span class="hljs-string">&quot;&quot;&quot;Rollout Pool: sample trajectories in parallel against interactive environments.&quot;&quot;&quot;</span>
+        <span class="hljs-keyword">def</span> <span class="hljs-title function_">run_one</span>(<span class="hljs-params">prompt</span>):
+            env = <span class="hljs-variable language_">self</span>.env()
+            obs, traj = env.reset(prompt), []
+            <span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(max_steps := <span class="hljs-number">50</span>):
+                action = <span class="hljs-variable language_">self</span>.model.generate(obs[<span class="hljs-string">&quot;history&quot;</span>])
+                next_obs, done = env.step(action)
+                traj.append({<span class="hljs-string">&quot;obs&quot;</span>: obs, <span class="hljs-string">&quot;action&quot;</span>: action, <span class="hljs-string">&quot;done&quot;</span>: done})
+                <span class="hljs-keyword">if</span> done: <span class="hljs-keyword">break</span>
+                obs = next_obs
+            <span class="hljs-keyword">return</span> traj
+        <span class="hljs-keyword">with</span> ThreadPoolExecutor(max_workers=num_envs) <span class="hljs-keyword">as</span> ex:
+            <span class="hljs-keyword">return</span> <span class="hljs-built_in">list</span>(ex.<span class="hljs-built_in">map</span>(run_one, prompts))
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">reward_worker</span>(<span class="hljs-params">self, trajectories</span>):
+        <span class="hljs-string">&quot;&quot;&quot;Reward Pool: compute final reward per trajectory (env verifier / judge, pure CPU).&quot;&quot;&quot;</span>
+        <span class="hljs-keyword">for</span> traj <span class="hljs-keyword">in</span> trajectories:
+            traj.append({<span class="hljs-string">&quot;reward&quot;</span>: <span class="hljs-variable language_">self</span>.reward_fn(traj[-<span class="hljs-number">1</span>][<span class="hljs-string">&quot;obs&quot;</span>])})
+        <span class="hljs-keyword">return</span> trajectories
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">run_async</span>(<span class="hljs-params">self, prompts</span>):
+        <span class="hljs-string">&quot;&quot;&quot;Launch async loop: rollout+reward produce → buffer → train consumes.&quot;&quot;&quot;</span>
+        <span class="hljs-keyword">def</span> <span class="hljs-title function_">producer</span>():
+            <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+                <span class="hljs-keyword">for</span> t <span class="hljs-keyword">in</span> <span class="hljs-variable language_">self</span>.reward_worker(<span class="hljs-variable language_">self</span>.rollout_worker(prompts)):
+                    <span class="hljs-variable language_">self</span>.buffer.put(t)
+                time.sleep(<span class="hljs-number">0.1</span>)
+        threading.Thread(target=producer, daemon=<span class="hljs-literal">True</span>).start()
+</code></pre></details>
+<h1>Key: ① Three pools decoupled — no blocking ② Environment is bottleneck (env delay ≫ GPU)</h1>
+<h1>③ ThreadPoolExecutor = toy; production → Ray actors / k8s pods ④ Buffer decouples cadence</h1>
 <h2 id="sec-3">3. Training stack comparison</h2>
 <h3 id="sec-4">3.1 verl (Volcano Engine)</h3>
 <p>verl<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">Initiated by ByteDance Seed, community-maintained RL training framework: hybrid engine time-multiplexes GPUs (inference ↔ training switch), SPMD 3D parallelism, multi-algorithm support. <a href="https://github.com/verl-project/verl">github.com/verl-project/verl</a> (formerly volcengine/verl)</span></span>&#39;s core design is the <strong>hybrid engine</strong>: the same set of GPUs time-multiplexes between inference and training modes — train one batch → switch to inference mode to generate new rollouts → switch back to training. Saves GPUs (no need for two clusters), but switching incurs overhead (weight sync + memory reallocation).</p>

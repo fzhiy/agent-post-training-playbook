@@ -89,6 +89,53 @@ The **core mental model** for agent RL training: three independently-scalable as
 
 > 💡 **Each pool has a different optimal hardware type**: the Rollout Pool cares about inference throughput (high GPU utilization + many CPU env workers); the Reward Pool is almost pure CPU; the Training Pool cares about gradient computation (high GPU memory). **Separated deployment** is more expensive than hybrid but each pool scales independently — suitable for production scale.
 
+**From-scratch implementation** (async three-pool rollout skeleton, interview hand-tear standard):
+
+```python
+import threading, queue, time
+from concurrent.futures import ThreadPoolExecutor
+
+class AsyncRolloutPipeline:
+    """Async three-pool skeleton: Rollout worker → Reward worker → Trajectory buffer → Training."""
+    def __init__(self, env_factory, reward_fn, policy_model, buffer_size=1000):
+        self.env = env_factory
+        self.reward_fn = reward_fn
+        self.model = policy_model                         # synced from Training pool periodically
+        self.buffer = queue.Queue(maxsize=buffer_size)
+
+    def rollout_worker(self, prompts, num_envs=8):
+        """Rollout Pool: sample trajectories in parallel against interactive environments."""
+        def run_one(prompt):
+            env = self.env()
+            obs, traj = env.reset(prompt), []
+            for _ in range(max_steps := 50):
+                action = self.model.generate(obs["history"])
+                next_obs, done = env.step(action)
+                traj.append({"obs": obs, "action": action, "done": done})
+                if done: break
+                obs = next_obs
+            return traj
+        with ThreadPoolExecutor(max_workers=num_envs) as ex:
+            return list(ex.map(run_one, prompts))
+
+    def reward_worker(self, trajectories):
+        """Reward Pool: compute final reward per trajectory (env verifier / judge, pure CPU)."""
+        for traj in trajectories:
+            traj.append({"reward": self.reward_fn(traj[-1]["obs"])})
+        return trajectories
+
+    def run_async(self, prompts):
+        """Launch async loop: rollout+reward produce → buffer → train consumes."""
+        def producer():
+            while True:
+                for t in self.reward_worker(self.rollout_worker(prompts)):
+                    self.buffer.put(t)
+                time.sleep(0.1)
+        threading.Thread(target=producer, daemon=True).start()
+```
+# Key: ① Three pools decoupled — no blocking ② Environment is bottleneck (env delay ≫ GPU)  
+# ③ ThreadPoolExecutor = toy; production → Ray actors / k8s pods ④ Buffer decouples cadence
+
 ## 3. Training stack comparison
 
 ### 3.1 verl (Volcano Engine)

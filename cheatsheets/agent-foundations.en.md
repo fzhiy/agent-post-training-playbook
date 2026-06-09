@@ -66,6 +66,55 @@ Final Answer: …
 
 > ⚠️ **stop-token footgun:** at inference you MUST set `Observation:` as a stop sequence. Otherwise the model will **continue generating an `Observation: …` itself** (hallucinating the tool return) instead of stopping to wait for the environment to inject the real result — this is the most common ReAct production bug. Hands-on: [react-tool-call-loop](drill-react-tool-call-loop.html).
 
+**From-scratch implementation** (interview hand-tear standard: minimal ReAct loop + stop-sequence + environment-injected observations):
+
+```python
+import re
+
+def react_loop(prompt, tools, llm_generate, max_steps=10):
+    """Minimal ReAct loop: Thought → Action → Observation → loop.
+    llm_generate(messages, stop)->str: calls the LLM, stops immediately on stop sequences.
+    tools: dict[str, callable], tool_name→executor (Obs from the environment, not the model).
+    Returns (final_answer, trajectory)."""
+    messages = [{"role": "user", "content": prompt}]
+    trajectory = []
+
+    for _ in range(max_steps):
+        # 1. Reason + act; stop=["Observation:"] prevents hallucinated tool returns (model must stop)
+        raw = llm_generate(messages, stop=["Observation:"])
+        trajectory.append(raw)
+
+        # 2. Check for final answer
+        final = re.search(r"Final Answer:\s*(.*)", raw, re.S)
+        if final:
+            return final.group(1).strip(), trajectory
+
+        # 3. Parse Action and Action Input
+        action = re.search(r"Action:\s*(\S+)", raw)
+        action_input = re.search(r"Action Input:\s*(.*)", raw, re.S)
+        if not action:
+            obs = "Error: no Action found. Please output 'Action: <tool_name>' then 'Action Input: <args>'."
+        elif action.group(1) not in tools:
+            obs = f"Error: unknown tool '{action.group(1)}'. Available: {list(tools.keys())}"
+        else:
+            try:
+                result = tools[action.group(1)](action_input.group(1).strip())
+                obs = str(result)                               # Observation from environment/tool
+            except Exception as e:
+                obs = f"Tool error: {e}"
+
+        # 4. Inject the real Observation back into context (new user/system message, NOT assistant continuation)
+        messages.append({"role": "assistant", "content": raw})
+        messages.append({"role": "user",   "content": f"Observation: {obs}"})
+
+    return None, trajectory                                     # step budget exhausted
+# Interview key points:
+# ① stop=["Observation:"] prevents hallucination — model stops, env injects real Obs
+# ② Observation is a new message (role=user/system), not an assistant continuation
+# ③ Action/Action Input parsed with regex; production would use JSON or structured output
+# ④ Tool execution wrapped in try/except + unknown-tool fallback to prevent one-step kills
+```
+
 ## 3. Planning: Plan-and-Execute vs ReAct
 
 - **ReAct**: per-step decision (reactive) — decides the next action from the current observation each step; flexible but no global view.

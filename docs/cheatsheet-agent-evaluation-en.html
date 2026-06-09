@@ -312,6 +312,34 @@
 <div class="callout callout-warn"><div class="callout-label">注意 / Caution</div>
 <p><strong>Reproducibility red line:</strong> reporting only &quot;pass@1 = 41%&quot; without <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span>, temperature, seed, harness means <strong>nobody can reproduce it</strong>. The responsible report: fixed seed + the mean ± interval over <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> samples + the harness version. A lone number without these defaults to noisy variance.</p>
 </div>
+<p><strong>From-scratch implementation</strong> (core agent evaluation metrics: unbiased pass@k + pass^k reliability):</p>
+<pre><code class="hljs language-python"><span class="hljs-keyword">import</span> numpy <span class="hljs-keyword">as</span> np
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">unbiased_pass_at_k</span>(<span class="hljs-params">n, c, k</span>):
+    <span class="hljs-string">&quot;&quot;&quot;n samples, c correct — unbiased probability of ≥1 correct in k draws (Chen et al.).&quot;&quot;&quot;</span>
+    <span class="hljs-keyword">if</span> n - c &lt; k:
+        <span class="hljs-keyword">return</span> <span class="hljs-number">1.0</span>
+    <span class="hljs-keyword">return</span> <span class="hljs-number">1.0</span> - np.prod(<span class="hljs-number">1.0</span> - k / np.arange(n - c + <span class="hljs-number">1</span>, n + <span class="hljs-number">1</span>))
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">compute_agent_metrics</span>(<span class="hljs-params">results, k=<span class="hljs-number">5</span></span>):
+    <span class="hljs-string">&quot;&quot;&quot;results: list[dict] with {success: bool, traj_len: int, traj_cost: float}.
+    Returns pass@k (capability ceiling), pass^k (reliability), avg steps/cost.&quot;&quot;&quot;</span>
+    n = <span class="hljs-built_in">len</span>(results)
+    c = <span class="hljs-built_in">sum</span>(<span class="hljs-number">1</span> <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results <span class="hljs-keyword">if</span> r[<span class="hljs-string">&quot;success&quot;</span>])
+    pass_at_k = unbiased_pass_at_k(n, c, k) <span class="hljs-keyword">if</span> n &gt;= k <span class="hljs-keyword">else</span> <span class="hljs-built_in">float</span>(<span class="hljs-string">&#x27;nan&#x27;</span>)
+    <span class="hljs-comment"># pass^k: sliding-window estimate — fraction of length-k windows where all succeeded</span>
+    successes = [r[<span class="hljs-string">&quot;success&quot;</span>] <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results]
+    windows_all_pass = <span class="hljs-built_in">sum</span>(
+        <span class="hljs-built_in">all</span>(successes[i:i+k]) <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-built_in">len</span>(successes) - k + <span class="hljs-number">1</span>)
+    )
+    pass_pow_k = windows_all_pass / <span class="hljs-built_in">max</span>(<span class="hljs-built_in">len</span>(successes) - k + <span class="hljs-number">1</span>, <span class="hljs-number">1</span>)
+    avg_steps = np.mean([r[<span class="hljs-string">&quot;traj_len&quot;</span>] <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results])
+    avg_cost  = np.mean([r[<span class="hljs-string">&quot;traj_cost&quot;</span>] <span class="hljs-keyword">for</span> r <span class="hljs-keyword">in</span> results])
+    <span class="hljs-keyword">return</span> {<span class="hljs-string">&quot;pass@k&quot;</span>: pass_at_k, <span class="hljs-string">&quot;pass^k&quot;</span>: pass_pow_k,
+            <span class="hljs-string">&quot;avg_steps&quot;</span>: avg_steps, <span class="hljs-string">&quot;avg_cost&quot;</span>: avg_cost, <span class="hljs-string">&quot;success_rate&quot;</span>: c/n}
+</code></pre>
+<h1>Key: ① pass@k = capability ceiling; pass^k = reliability (what deployment cares about)</h1>
+<h1>② Report trajectory efficiency (steps/cost) alongside success rate — &quot;20 steps to succeed&quot; ≠ &quot;3 steps&quot;</h1>
 <h2 id="sec-10">5. Trajectory vs Outcome eval</h2>
 <table>
 <thead>

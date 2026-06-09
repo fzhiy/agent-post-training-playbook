@@ -255,6 +255,67 @@
 <div class="callout callout-info"><div class="callout-label">提示 / Note</div>
 <p><strong>三池各自最适硬件不同</strong>:Rollout 池重推理吞吐(高 GPU 利用率 + 大量 CPU 环境 worker);Reward 池几乎纯 CPU;Training 池重梯度计算(高 GPU 显存)。<strong>分离部署</strong>比 hybrid 更贵但各自可独立扩缩,适合生产级规模。</p>
 </div>
+<p><strong>from-scratch 实现</strong>(三池异步 rollout 骨架,面试手撕标准):</p>
+<details class="code-fold"><summary>60 行 / lines</summary><pre><code class="hljs language-python"><span class="hljs-keyword">import</span> threading, queue, time
+<span class="hljs-keyword">from</span> concurrent.futures <span class="hljs-keyword">import</span> ThreadPoolExecutor
+
+<span class="hljs-keyword">class</span> <span class="hljs-title class_">AsyncRolloutPipeline</span>:
+    <span class="hljs-string">&quot;&quot;&quot;异步三池骨架:Rollout worker → Reward worker → Trajectory buffer → Training.&quot;&quot;&quot;</span>
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">__init__</span>(<span class="hljs-params">self, env_factory, reward_fn, policy_model, buffer_size=<span class="hljs-number">1000</span></span>):
+        <span class="hljs-variable language_">self</span>.env = env_factory                            <span class="hljs-comment"># 环境工厂(每个 worker 独立实例)</span>
+        <span class="hljs-variable language_">self</span>.reward_fn = reward_fn                        <span class="hljs-comment"># reward 计算(环境执行/判题/校验)</span>
+        <span class="hljs-variable language_">self</span>.model = policy_model                         <span class="hljs-comment"># 当前策略(定期从 Training 池同步)</span>
+        <span class="hljs-variable language_">self</span>.buffer = queue.Queue(maxsize=buffer_size)    <span class="hljs-comment"># 轨迹缓冲区(解耦推理与训练)</span>
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">rollout_worker</span>(<span class="hljs-params">self, prompts, num_envs=<span class="hljs-number">8</span></span>):
+        <span class="hljs-string">&quot;&quot;&quot;Rollout 池:并行与交互式环境采样生成轨迹。GPU 推理 + CPU 环境执行交叉。&quot;&quot;&quot;</span>
+        <span class="hljs-keyword">def</span> <span class="hljs-title function_">run_one</span>(<span class="hljs-params">prompt</span>):
+            env = <span class="hljs-variable language_">self</span>.env()                              <span class="hljs-comment"># 每 worker 独立环境实例</span>
+            obs, traj = env.reset(prompt), []
+            <span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(max_steps := <span class="hljs-number">50</span>):
+                <span class="hljs-comment"># 1. 推理(在 GPU 上):当前策略给定历史→下一动作</span>
+                action = <span class="hljs-variable language_">self</span>.model.generate(obs[<span class="hljs-string">&quot;history&quot;</span>])
+                <span class="hljs-comment"># 2. 执行(在 CPU 上):动作送入环境,环境返回新观测与局部奖励</span>
+                next_obs, done = env.step(action)
+                traj.append({<span class="hljs-string">&quot;obs&quot;</span>: obs, <span class="hljs-string">&quot;action&quot;</span>: action, <span class="hljs-string">&quot;done&quot;</span>: done})
+                <span class="hljs-keyword">if</span> done: <span class="hljs-keyword">break</span>
+                obs = next_obs
+            <span class="hljs-keyword">return</span> traj
+
+        <span class="hljs-keyword">with</span> ThreadPoolExecutor(max_workers=num_envs) <span class="hljs-keyword">as</span> ex:
+            trajectories = <span class="hljs-built_in">list</span>(ex.<span class="hljs-built_in">map</span>(run_one, prompts))
+        <span class="hljs-keyword">return</span> trajectories
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">reward_worker</span>(<span class="hljs-params">self, trajectories</span>):
+        <span class="hljs-string">&quot;&quot;&quot;Reward 池:对每条轨迹计算最终 reward(环境终态校验/判题)。&quot;&quot;&quot;</span>
+        <span class="hljs-keyword">for</span> traj <span class="hljs-keyword">in</span> trajectories:
+            final_state = traj[-<span class="hljs-number">1</span>][<span class="hljs-string">&quot;obs&quot;</span>]                 <span class="hljs-comment"># 轨迹终态</span>
+            traj_reward = <span class="hljs-variable language_">self</span>.reward_fn(final_state)     <span class="hljs-comment"># 纯 CPU 计算(跑单测/查网页)</span>
+            traj.append({<span class="hljs-string">&quot;reward&quot;</span>: traj_reward})
+        <span class="hljs-keyword">return</span> trajectories
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">train_step</span>(<span class="hljs-params">self, batch</span>):
+        <span class="hljs-string">&quot;&quot;&quot;Training 池:从 buffer 取轨迹→算 loss→梯度更新(在这里调用,与 rollout 异步)。&quot;&quot;&quot;</span>
+        <span class="hljs-comment"># 实际实现:从 self.buffer 取 batch → compute PPO/GRPO loss → optimizer.step()</span>
+        <span class="hljs-keyword">pass</span>                                              <span class="hljs-comment"># 训练细节见 agentic-RL 篇代码</span>
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">run_async</span>(<span class="hljs-params">self, prompts, sync_interval=<span class="hljs-number">10</span></span>):
+        <span class="hljs-string">&quot;&quot;&quot;启动异步循环:rollout+reward 持续产出→喂 buffer→train 从 buffer 消费。&quot;&quot;&quot;</span>
+        <span class="hljs-keyword">def</span> <span class="hljs-title function_">producer</span>():
+            <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+                trajs = <span class="hljs-variable language_">self</span>.rollout_worker(prompts)
+                trajs = <span class="hljs-variable language_">self</span>.reward_worker(trajs)
+                <span class="hljs-keyword">for</span> t <span class="hljs-keyword">in</span> trajs:
+                    <span class="hljs-variable language_">self</span>.buffer.put(t)                    <span class="hljs-comment"># 解耦:rollout 产出速度 ≠ train 消费速度</span>
+                time.sleep(<span class="hljs-number">0.1</span>)
+        threading.Thread(target=producer, daemon=<span class="hljs-literal">True</span>).start()
+        <span class="hljs-comment"># Training 端(另一线程/进程)从 buffer 取 batch → train_step</span>
+<span class="hljs-comment"># 面试关键点:</span>
+<span class="hljs-comment"># ① 三池异步解耦: rollout/reward/training 各自独立,不互相阻塞</span>
+<span class="hljs-comment"># ② 环境是瓶颈(source):环境步数×单步延迟 ≫ 推理延迟时,同步=GPU 空等</span>
+<span class="hljs-comment"># ③ ThreadPoolExecutor 模拟多环境并行;生产会用 Ray actor / k8s pod</span>
+<span class="hljs-comment"># ④ Buffer 解耦: rollout 产出速度波动不影响 training 消费节奏</span>
+</code></pre></details>
 <h2 id="sec-3">3. 训练栈对比 / Training stack comparison</h2>
 <h3 id="sec-4">3.1 verl (Volcano Engine)</h3>
 <p>verl<span class="cite-wrap"><a class="cite" id="fnref-1" href="#ref-1">1</a><span class="cite-note">ByteDance Seed 发起、社区维护的 RL 训练框架:hybrid engine 分时复用 GPU(推理↔训练切换)、SPMD 3D 并行、多算法支持。<a href="https://github.com/verl-project/verl">github.com/verl-project/verl</a>(原 volcengine/verl)</span></span> 的核心设计是 <strong>hybrid engine</strong>:同一组 GPU 在推理和训练模式间分时切换——训完一批 → 切推理模式生成新 rollout → 切回训练。省 GPU(不需两套集群),但切换有开销(权重同步 + 显存重分配)。</p>

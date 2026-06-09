@@ -105,6 +105,45 @@ $$\text{pass@}k = \mathbb{E}_{\text{problems}}\left[\,1 - \frac{\binom{n-c}{k}}{
 
 > ⚠️ **可复现红线:** 只报「pass@1 = 41%」而不报 $n$、温度、seed、harness,**别人无法复现**。负责任的报法:固定 seed + 报 $n$ 次采样的均值 ± 区间 + harness 版本。技报里看到不带这些的单个数字,默认它有方差噪声。
 
+**from-scratch 实现**(agent 评测核心指标:pass@k 无偏估计 + pass^k 可靠性):
+
+```python
+import numpy as np
+from collections import defaultdict
+
+def unbiased_pass_at_k(n, c, k):
+    """每题 n 次采样、c 次正确,至少 1 次对的概率(Chen et al. 的无偏估计)。
+    公式:1 - C(n-c, k)/C(n, k),数值稳定实现。"""
+    if n - c < k:
+        return 1.0
+    return 1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1))
+
+def compute_agent_metrics(results, k=5):
+    """results: list[dict],每条={success: bool, traj_len: int, traj_cost: float}.
+    返回 pass@k(能力上界), pass^k(可靠性), 平均步数/成本。"""
+    n = len(results)
+    c = sum(1 for r in results if r["success"])
+    # pass@k:至少 1 次成功的能力上界
+    pass_at_k = unbiased_pass_at_k(n, c, k) if n >= k else float('nan')
+    # pass^k:连续 k 次全成功的可靠性(实际部署看的指标)
+    # 从顺序结果用滑动窗估计:所有长度为 k 的窗口里全成功的比例
+    successes = [r["success"] for r in results]
+    windows_all_pass = sum(
+        all(successes[i:i+k]) for i in range(len(successes) - k + 1)
+    )
+    pass_pow_k = windows_all_pass / max(len(successes) - k + 1, 1)
+    # 轨迹效率
+    avg_steps = np.mean([r["traj_len"] for r in results])
+    avg_cost  = np.mean([r["traj_cost"] for r in results])
+    return {"pass@k": pass_at_k, "pass^k": pass_pow_k,
+            "avg_steps": avg_steps, "avg_cost": avg_cost, "success_rate": c/n}
+
+# 面试关键点:
+# ① pass@k 是"能力上限"(有 oracle 验证器时能拿到的最好),pass^k 是"可靠性"
+# ② agent 部署看 pass^k——k 次跑至少 1 次闯祸就不可用(见 τ-bench)
+# ③ 轨迹效率(步数/成本)与成功率一起报,防"绕了 20 步成功"被等同于"3 步成功"
+```
+
 ## 5. 轨迹评测 vs 结果评测 / Trajectory vs Outcome eval
 
 | | outcome-only(execution-based) | trajectory(过程) |

@@ -66,6 +66,45 @@ In multi-agent orchestrators (AutoGen / MetaGPT), **indirect injection can propa
 
 > ❌ **Misconception:** "Add a system prompt saying 'ignore all external instructions' and injection is solved." System prompt hardening helps but is **not reliable**: it relies on the model understanding and following it, while injection attacks precisely exploit the model's fundamental inability to distinguish "real system prompt" from "user/tool content disguised as instructions." System prompt hardening **raises the bar** for attackers, it does not eliminate the threat; it must be combined with least privilege + human-in-the-loop.
 
+**From-scratch implementation** (tool output sandbox: marking external content as untrusted + least-privilege wrapper):
+
+```python
+import re
+
+class ToolGuard:
+    """Tool-call defense: mark tool returns as untrusted + dangerous-op interception + output filtering."""
+    DANGER_PATTERNS = [
+        r"(?i)ignore\s+(all\s+)?(previous|above|prior)\s+instructions?",
+        r"(?i)you\s+(are|now)\s+a\s+(different|new)\s+(ai|assistant|model)",
+        r"(?i)as\s+an\s+AI\s+(language\s+)?model\s*(,|\s+you\s+must)",
+    ]
+
+    def sanitize_tool_output(self, raw_output: str) -> dict:
+        """Mark tool output as untrusted; detect known injection patterns."""
+        alerts = [f"suspicious: {pat}" for pat in self.DANGER_PATTERNS
+                  if re.search(pat, raw_output)]
+        safe = f'<external_content>{raw_output}</external_content>'
+        return {"content": safe, "tainted": len(alerts) > 0, "alerts": alerts}
+
+    def guard_action(self, tool_name: str, tool_args: dict, policy: dict) -> bool:
+        """Least privilege: check action against pre-registered policy.
+        policy: {tool_name: {allowed_args, forbidden_args, require_confirm}}.
+        Returns True=allowed, False=blocked / needs HITL."""
+        if tool_name not in policy:
+            return False
+        allowed = policy[tool_name]
+        if "forbidden_args" in allowed:
+            if any(str(a) in str(tool_args) for a in allowed["forbidden_args"]):
+                return False
+        if "require_confirm" in allowed:
+            if any(str(a) in str(tool_args) for a in allowed["require_confirm"]):
+                return False                                # trigger HITL
+        return True
+```
+# Key: ① Wrap tool returns as untrusted (XML tags / role separation) — don't let model read raw externals
+# ② Least privilege: each tool pre-registered with scope; out-of-scope = blocked deterministically outside the model
+# ③ Regex detection raises the bar — the real defense is layers ②③④ (permission / HITL)
+
 ## 3. Trajectory-level monitoring & audit
 
 The unit of agent safety monitoring should be the **complete trajectory**, not individual actions — each step may be legal individually but the sequence may constitute an attack.
